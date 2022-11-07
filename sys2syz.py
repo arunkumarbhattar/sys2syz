@@ -16,21 +16,23 @@ import string
 
 class Sys2syz(object):
     NETBSD = 1
-    supported_os = {'NetBSD': NETBSD}
+    LINUX = 2
+    supported_os = {'netbsd': NETBSD, 'linux': LINUX}
 
     def __init__(self, input_type, target, compile_commands, os_name, log_level):
         self.input_type = input_type
         self.compile_commands = compile_commands
-        self.os = os_name
-        self.os_type = None
+        self.os = os_name.lower()
+        self.os_type = self.supported_os[self.os]
         self.log_level = log_level
+        if not exists(os.path.join(os.getcwd(), "out/", self.os, "preprocessed/")):
+            os.makedirs(os.path.join(os.getcwd(), "out/", self.os, "preprocessed/"))
 
         if input_type == "ioctl":
             self.target = os.path.realpath(target)
-            self.out_dir = os.path.join(os.getcwd(), "out/preprocessed/", basename(self.target), "out")
+            self.out_dir = os.path.join(os.getcwd(), "out/", self.os, "preprocessed/", basename(self.target), "out")
             self.macro_details = ""
-            self.ioctls = []
-            
+            self.ioctls = []            
             self.bear = Bear(self)
             self.c2xml = C2xml(self)
             # initialize the sub classes
@@ -41,7 +43,7 @@ class Sys2syz(object):
 
         if input_type == "syscall":
             self.target = target
-            self.out_dir = os.path.join(os.getcwd(), "out/preprocessed/", basename(self.target), "out")
+            self.out_dir = os.path.join(os.getcwd(), "out/", self.os, "preprocessed/", basename(self.target), "out")
             self.bear = Bear(self)
             self.c2xml = C2xml(self)
             self.syscall = Syscall(self)
@@ -150,10 +152,10 @@ def main():
     parser = argparse.ArgumentParser(description="Sys2Syz : A Utility to convert Syscalls and Ioctls to Syzkaller representation")
     
     parser.add_argument("-i", "--input_type", help="input type ioctl/syscall", type=str, required=True)
-    parser.add_argument("-t", "--target", help="target file to generate descriptions for", type=str, required=True)
+    parser.add_argument("-t", "--target", help="target device directory/ syscall name", type=str, required=True)
     parser.add_argument("-o", "--operating-system", help="target operating system", type=str, required=True)
     parser.add_argument("-c", "--compile-commands", help="path to compile_commands.json", type=str, required=True)
-    parser.add_argument("-v", "--verbosity", help="Sys2syz log level", action="count")
+    parser.add_argument("-v", "--verbosity", help="sys2syz log level", action="count")
     args = parser.parse_args()
 
     logging = get_logger("Syz2syz", args.verbosity)
