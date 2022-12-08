@@ -87,7 +87,7 @@ class Ioctl(object):
                     print(str(line))
                     if "return" in line:
                         # check if line contains ( and )
-                        if "(" in line and ")" in line: # this means this is a call into the ioctl handler
+                        if "(" in line and ")" and "ioctl" in line: # this means this is a call into the ioctl handler
                             if self.description is None:
                                 # split the line based on space
                                 ioctl_handler = line.split(" ")
@@ -171,6 +171,9 @@ class Ioctl(object):
         # if the count of self.description is 1
         if len(self.description) >= 1:
             # prompt the user to select the correct struct
+            res = []
+            [res.append(x) for x in self.description if x not in res]
+            self.description = res
             print("The ioctl command " + self.command + " is using the following structs : " + str(self.description))
             for i in range(len(self.description)):
                 print(str(i) + " : " + self.description[i])
@@ -180,7 +183,7 @@ class Ioctl(object):
             if selected_struct == "-1":
                 return ""
             elif selected_struct == "-2":
-                return "long"
+                return "int64"
             self.description = self.description[int(selected_struct)]
         return str(self.description)
 

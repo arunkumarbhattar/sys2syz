@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import re
 import os
 import string
- 
+
 type_dict = {
     "bool": "bool8",
     "unsigned char": "int8",
@@ -28,11 +28,12 @@ type_dict = {
     "void": "void"
 }
 
+
 class Descriptions(object):
     def __init__(self, sysobj):
         self.sysobj = sysobj
         self.target = sysobj.target
-        
+
         self.logger = get_logger("Descriptions", sysobj.log_level)
 
         self.gflags = {}
@@ -75,9 +76,10 @@ class Descriptions(object):
         """
 
         try:
+            # adding this case because build_function calls resolve_id without find_id argument
             if find_id is None:
-                print("returning the root ", root)
-                return root
+                self.logger.warning("[!] find_id is NULL, hence returning None")
+                return None
             for element in root:
                 if element.get("id") == find_id:
                     return element
@@ -87,7 +89,7 @@ class Descriptions(object):
         except Exception as e:
             self.logger.error(e)
             self.logger.warning("[!] Issue in resolving: %s", find_id)
-        
+
     def get_id(self, root, find_ident):
         """
         Find node having ident value same as find_ident
@@ -96,25 +98,29 @@ class Descriptions(object):
 
         try:
             if root is None:
+                self.logger.warning("[!] get_id() -> Root is NULL, hence returning NULL")
                 return None
             for element in root:
-                #if element is found in the tree call get_type 
-                #function, to find the type of argument for descriptions
+                # if element is found in the tree call get_type
+                # function, to find the type of argument for descriptions
                 if element.get("ident") == find_ident:
-                    self.logger.warning("- Generating desciption for "+ find_ident)
+                    self.logger.debug("- Generating description for " + find_ident)
                     generatedType = self.get_type(element), element
                     # print the generatedType as a str
                     print(str(generatedType))
                     return generatedType
                 for child in element:
                     if child.get("ident") == find_ident:
-                        self.logger.warning("- Generating desciption for child"+ find_ident)
+                        self.logger.debug("- Generating description for child" + find_ident)
                         return self.get_type(child), child
             self.logger.debug("TO-DO: Find again")
             self.get_id(self.current_root, find_ident)
         except Exception as e:
             self.logger.error(e)
-            self.logger.warning("[!] ***********Issue in resolving: %s", find_ident)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            self.logger.warning("[!] Issue in resolving: %s", find_ident)
 
     def get_type(self, child, default_name=None):
         """
@@ -123,47 +129,52 @@ class Descriptions(object):
         """
 
         try:
-            #for structures: need to define each element present in struct (build_struct)
+            # for structures: need to define each element present in struct (build_struct)
             if child.get("type") == "struct":
                 self.logger.debug("TO-DO: struct")
                 return self.build_struct(child, default_name)
-            #for unions: need to define each element present in union (build_union)
+            # for unions: need to define each element present in union (build_union)
             elif child.get("type") == "union":
                 self.logger.debug("TO-DO: union")
-                retVal = self.build_union(child, default_name)
-                if retVal is None:
-                    return "long" # default to long
-            #for functions
+                return self.build_union(child, default_name)
+            # for functions
             elif child.get("type") == "function":
                 self.logger.debug("TO-DO: function")
                 return self.build_function(child, default_name)
-            #for pointers: need to define the pointer type and its direction (build_ptr)
+            # for pointers: need to define the pointer type and its direction (build_ptr)
             elif child.get("type") == "pointer":
                 self.logger.debug("TO-DO: pointer")
                 return self.build_ptr(child, default_name)
-            #for arrays, need to define type of elements in array and size of array (if defined)
+            # for arrays, need to define type of elements in array and size of array (if defined)
             elif child.get("type") == "array":
                 self.logger.debug("TO-DO: array")
                 desc_str = "array"
                 if "base-type-builtin" in child.attrib.keys():
-                    type_str = type_dict[child.get('base-type-builtin')]
+                    try:
+                        type_str = type_dict[child.get('base-type-builtin')]
+                    except KeyError:
+                        type_str = "unsigned long long"
                 else:
                     root = self.resolve_id(self.current_root, child.get("base-type"))
                     type_str = self.get_type(root)
                 size_str = child.get('array-size')
+                # sometimes sizes may look like this unsigned long cpu_bitmap[]; in such cases
+                # we return max array size
+                if size_str is None:
+                    size_str = "65536"
                 desc_str += "[" + type_str + ", " + size_str + "]"
                 return desc_str
-            #for enums: predict flag for enums (build_enums)
+            # for enums: predict flag for enums (build_enums)
             elif child.get("type") == "enum":
                 self.logger.debug("TO-DO: enum")
                 desc_str = "flags["
-                desc_str += child.get("ident")+"_flags]"
+                desc_str += child.get("ident") + "_flags]"
                 return self.build_enums(child)
-            #for nodes: 
-            #builtin types 
+            # for nodes:
+            # builtin types
             elif "base-type-builtin" in child.keys():
-                return type_dict.get(child.get("base-type-builtin"))            
-            #custom type
+                return type_dict.get(child.get("base-type-builtin"))
+                # custom type
             else:
                 self.logger.debug("TO-DO: base-type")
                 root = self.resolve_id(self.current_root, child.get("base-type"))
@@ -173,10 +184,10 @@ class Descriptions(object):
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             print(exc_type, fname, exc_tb.tb_lineno)
-            self.logger.info("[!] Error occured while fetching the type")
+            self.logger.info("[!] Error occurred while fetching the type")
             if self.sysobj.os_type == 2:
-                print("defaulting to long")
-                return "long"
+                print("defaulting to int64")
+                return "int64"
 
     def instruct_flags(self, strct_name, name, strt_line, end_line, flg_type):
         try:
@@ -184,46 +195,47 @@ class Descriptions(object):
             flg_name = name + "_flag"
             file_name = self.current_file + ".i"
             if flg_name in self.gflags:
-                flg_name = name + "_" + strct_name + "_flag" 
+                flg_name = name + "_" + strct_name + "_flag"
             flags = []
             if self.sysobj.input_type == "ioctl":
                 for i in range(len(self.flag_descriptions[file_name])):
                     flag_tups = self.flag_descriptions[file_name][i]
-                    if (int(flag_tups[1])>strt_line-1 and int(flag_tups[2])< end_line-1):
+                    if (int(flag_tups[1]) > strt_line - 1 and int(flag_tups[2]) < end_line - 1):
                         self.logger.debug("[*] Found instruct flags")
                         del self.flag_descriptions[file_name][i]
                         flags = flag_tups[0]
                         break
             else:
-                cnt=0
-                total = int(end_line) - strt_line -1
+                cnt = 0
+                total = int(end_line) - strt_line - 1
                 for child in self.current_root:
-                    if int(child.get("start-line")) in range(strt_line + 1 ,end_line):
-                        cnt+=1
+                    if int(child.get("start-line")) in range(strt_line + 1, end_line):
+                        cnt += 1
                         flags.append(child.get("ident"))
                     if cnt == total:
                         return
-            if len(flags)>0 and None not in flags:
+            if len(flags) > 0 and None not in flags:
                 self.gflags[flg_name] = ", ".join(flags)
-                ret_str = "flags["+ str(flg_name) + ", " + str(flg_type) + "]"
+                ret_str = "flags[" + str(flg_name) + ", " + str(flg_type) + "]"
             else:
                 ret_str = None
             return ret_str
         except Exception as e:
             self.logger.error(e)
             self.logger.warning("[!] Error in grabbing flags")
-    
+
     def possible_flags(self, strct_name):
         """function to find possible categories of leftover flags
         """
         self.logger.debug("[*] Finding possible flags for " + strct_name)
         small_flag = []
-        visited = [] 
+        visited = []
         file = self.current_file + ".i"
         for i in range(len(self.flag_descriptions[file])):
             flags = self.flag_descriptions[file][i][0]
             small_flag.extend([i.lower() for i in flags])
-        matches = [choice for (choice, score) in process.extract(strct_name, small_flag, scorer=fuzz.partial_ratio) if (score >= 50)]
+        matches = [choice for (choice, score) in process.extract(strct_name, small_flag, scorer=fuzz.partial_ratio) if
+                   (score >= 50)]
         self.logger.info("[+] Possible flags groups for " + strct_name + ": ")
         for match in matches:
             find_str = match.upper()
@@ -238,16 +250,16 @@ class Descriptions(object):
     def find_flags(self, name, elements, start, end):
         """Find flags present near a struct"""
         try:
-            self.logger.debug("[*] Finding flags in vicinity of " + name )
+            self.logger.debug("[*] Finding flags in vicinity of " + name)
             file_name = self.current_file + ".i"
-            last_tup=len(self.flag_descriptions[file_name])
-            #for flags after the struct
+            last_tup = len(self.flag_descriptions[file_name])
+            # for flags after the struct
             max_line_no = self.flag_descriptions[file_name][0][2]
-            min_line_no = self.flag_descriptions[file_name][last_tup-1][1]
+            min_line_no = self.flag_descriptions[file_name][last_tup - 1][1]
             index = None
-            for i in range(last_tup-1,0,-1):
+            for i in range(last_tup - 1, 0, -1):
                 flags_tup = self.flag_descriptions[file_name][i]
-                #find flags after the enf of struct, if start of flag tuple is < end of struct
+                # find flags after the enf of struct, if start of flag tuple is < end of struct
                 if flags_tup[1] < end:
                     if index == None:
                         break
@@ -263,7 +275,7 @@ class Descriptions(object):
             index = None
             for i in range(last_tup):
                 flags_tup = self.flag_descriptions[file_name][i]
-                #find flags present before start of struct, if end of flag tuple is > start of struct
+                # find flags present before start of struct, if end of flag tuple is > start of struct
                 if flags_tup[2] > start:
                     if index == None:
                         break
@@ -280,7 +292,7 @@ class Descriptions(object):
         except Exception as e:
             self.logger.error(e)
             self.logger.warning("[!] Error in finding flags present near struct " + name)
-    
+
     def append_flag(self):
         try:
             if (input("Add the predicted flags? (y/n): ") == "y"):
@@ -298,12 +310,12 @@ class Descriptions(object):
             self.gflags[flag_name] = ", ".join(flags)
             if strct_name in self.structs_defs.keys():
                 flag_type = self.structs_defs[strct_name][1][element]
-                self.structs_defs[strct_name][1][element] = "flags["+flag_name + ", " + flag_type + "]"
+                self.structs_defs[strct_name][1][element] = "flags[" + flag_name + ", " + flag_type + "]"
                 self.logger.debug("[*] New flag type added: " + self.structs_defs[strct_name][1][element])
                 return True
             elif strct_name in self.union_defs.keys():
                 flag_type = self.union_defs[strct_name][1][element]
-                self.union_defs[strct_name][1][element] = "flags["+flag_name + ", " + flag_type + "]"
+                self.union_defs[strct_name][1][element] = "flags[" + flag_name + ", " + flag_type + "]"
                 self.logger.debug("[*] New flag type added: " + self.union_defs[strct_name][1][element])
                 return True
         except Exception as e:
@@ -311,21 +323,21 @@ class Descriptions(object):
             self.logger.warning("[!] Error in function: add_flag")
 
     def break_enum(self, name, start, end):
-        total = (end - start) -1
+        total = (end - start) - 1
         cnt = 0
         for child in self.current_root:
-            if int(child.get("start-line")) in range(start + 1 ,end):
-                cnt+=1
+            if int(child.get("start-line")) in range(start + 1, end):
+                cnt += 1
                 self.gflags[name].append(child.get("ident"))
             if cnt == total:
                 return
-            
+
     def build_enums(self, child):
         name = child.get("ident")
         self.logger.debug("[*] Building enum: " + name)
         if name:
             desc_str = "flags[" + name + "_flags, int8]"
-            self.gflags[name + "_flags"]=[]
+            self.gflags[name + "_flags"] = []
         self.break_enum(name + "_flags", int(child.get("start-line")), int(child.get("end-line")))
         return desc_str
 
@@ -339,23 +351,23 @@ class Descriptions(object):
             self.logger.debug("[*] Building pointer")
             if self.sysobj.input_type == "syscall":
                 self.ptr_dir = input("Enter pointer direction: ")
-            #pointer is a builtin type
+            # pointer is a builtin type
             if "base-type-builtin" in child.attrib.keys():
                 base_type = child.get("base-type-builtin")
-                
-                #check if pointer is buffer type i.e stores char type value
-                if base_type =="void" or base_type == "char":
+
+                # check if pointer is buffer type i.e stores char type value
+                if base_type == "void" or base_type == "char":
                     ptr_str = "buffer[" + self.ptr_dir + "]"
 
                 else:
                     ptr_str = "ptr[" + self.ptr_dir + ", " + str(type_dict[child.get("base-type-builtin")]) + "]"
-            #pointer is of custom type, call get_type function
+            # pointer is of custom type, call get_type function
             else:
                 if default_name is not None and child.get('ident') is None:
-                    self.logger.debug("- Generating desciption for "+ default_name)
-                    x = self.get_type(self.resolve_id(self.current_root,child.get("base-type")), default_name)
+                    self.logger.debug("- Generating description for " + default_name)
+                    x = self.get_type(self.resolve_id(self.current_root, child.get("base-type")), default_name)
                 else:
-                    x = self.get_type(self.resolve_id(self.current_root,child.get("base-type")))
+                    x = self.get_type(self.resolve_id(self.current_root, child.get("base-type")))
                 if x is None:
                     ptr_str = "ptr[" + self.ptr_dir + ", " + "int64" + "]"
                 else:
@@ -363,7 +375,7 @@ class Descriptions(object):
             return ptr_str
         except Exception as e:
             self.logger.error(e)
-            self.logger.warning("[!] Error occured while resolving pointer")
+            self.logger.warning("[!] Error occurred while resolving pointer")
 
     def build_function(self, child, default_name=None):
         """
@@ -373,18 +385,22 @@ class Descriptions(object):
         if func_name is None:
             func_name = default_name
         self.logger.debug("[*] Building function " + func_name)
-        func_args={}
+        func_args = {}
         func_ret = None
         for i, arg in enumerate(child):
             arg_name = arg.get('ident')
             if arg_name is None:
-                arg_name='arg'+str(i)
-            self.logger.debug("- Generating desciption for "+ arg_name)
-            func_args[arg_name]=self.get_type(arg, arg_name)
-        
+                arg_name = 'arg' + str(i)
+            self.logger.debug("- Generating description for " + arg_name)
+            func_args[arg_name] = self.get_type(arg, arg_name)
+
         if child.get('base-type-builtin') == None:
-            func_ret = self.get_type(self.resolve_id(child.get('base-type')))
-            
+            resolved_id = self.resolve_id(child.get('base-type'))
+            if resolved_id is not None:
+                func_ret = self.get_type(resolved_id)
+            else:
+                # return void if no return type is specified
+                func_ret = "void*"
         '''else:
             base_type = type_dict.get(child.get("base-type-builtin")))
             if "int" not in base_type or "void" not in base_type:
@@ -398,9 +414,10 @@ class Descriptions(object):
         :return: Struct identifier
         """
 
+        global start_line
         try:
-            #regex to check if name of element contains 'len' keyword
-            len_regx = re.compile("(.+)len") 
+            # regex to check if name of element contains 'len' keyword
+            len_regx = re.compile("(.+)len")
             name = child.get("ident")
             if name is None:
                 name = default_name
@@ -419,29 +436,30 @@ class Descriptions(object):
                 strct_end = int(child.get("end-line"))
                 end_line = strct_strt
                 prev_elem_type = "None"
-                #get the type of each element in struct
+                # get the type of each element in struct
                 for element in child:
                     curr_name = element.get("ident")
                     if curr_name is None:
                         curr_name = "default_name"
-                    self.logger.warning("- Generating description for "+ curr_name)
+                    self.logger.warning("- Generating description for " + curr_name)
                     elem_type = self.get_type(element, curr_name)
                     print("RECEIVED ELEMENT TYPE: " + str(elem_type) + " FOR ELEMENT: " + str(curr_name))
                     if element.get("start-line") is None:
                         # set element to be builtin base type
                         self.logger.warning("[!] This Struct has NO Definition: " + curr_name)
                         elem_type = type_dict[element.get("base-type-builtin")]
+                        start_line = end_line
                     else:
                         start_line = int(element.get("start-line"))
-                        #check for flags defined in struct's scope,
-                        #possibility of flags only when prev_elem_type has 'int' keyword
+                        # check for flags defined in struct's scope,
+                        # possibility of flags only when prev_elem_type has 'int' keyword
                         if ((start_line - end_line) > 1) and ("int" in str(prev_elem_type)):
                             enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
                             if enum_name is None:
-                                self.logger.debug("- Generating desciption for "+ curr_name)
+                                self.logger.debug("- Generating description for " + curr_name)
                                 elem_type = self.get_type(element, curr_name)
                             else:
-                                elements[prev_elem_name]= enum_name
+                                elements[prev_elem_name] = enum_name
                         end_line = int(element.get("end-line"))
                     if str(elem_type) == "None":
                         elem_type = "int64"
@@ -452,16 +470,16 @@ class Descriptions(object):
                 if (strct_end - start_line) > 1:
                     enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
                     if enum_name is None:
-                        self.logger.debug("- Generating desciption for "+ curr_name)
-                        elem_type = self.get_type(element, curr_name)                        
+                        self.logger.debug("- Generating description for " + curr_name)
+                        elem_type = self.get_type(element, curr_name)
                     else:
-                        elements[prev_elem_name]= enum_name
-                #check for the elements which store length of an array or buffer
+                        elements[prev_elem_name] = enum_name
+                # check for the elements which store length of an array or buffer
                 for element in elements:
                     len_grp = len_regx.match(element)
                     if len_grp is not None:
                         buf_name = len_grp.groups()[0]
-                        matches = [search_str for search_str in elements if re.search(buf_name, search_str)] 
+                        matches = [search_str for search_str in elements if re.search(buf_name, search_str)]
                         for i in matches:
                             if i is not element:
                                 if elements[element] in type_dict.values():
@@ -480,7 +498,7 @@ class Descriptions(object):
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             print(exc_type, fname, exc_tb.tb_lineno)
-            self.logger.info("[!] Error occured while resolving the struct: " + name)
+            self.logger.info("[!] Error occurred while resolving the struct: " + name)
             # in case of linux, this error can occur if the struct has not been found anywhere in the code
             # in this case, we will default to long
             # print os_type
@@ -494,75 +512,103 @@ class Descriptions(object):
         """
         Build union
         :return: Union identifier
-        """        
-        #regex to check if name of element contains 'len' keyword
-        
-        len_regx = re.compile("(.+)len")
-        name = child.get("ident")
-        if name is None:
+        """
+        # regex to check if name of element contains 'len' keyword
+        try:
+            len_regx = re.compile("(.+)len")
+            name = child.get("ident")
+            if name is None:
                 name = default_name
-        if name not in self.union_defs.keys():
-            self.logger.debug("[*] Building union: " + name)
-            elements = {}
-            prev_elem_name = "nill"
-            strct_strt = int(child.get("start-line"))
-            strct_end = int(child.get("end-line"))
-            end_line = strct_strt
-            prev_elem_type = "None"
-            #get the type of each element in union
-            for element in child:
-                curr_name = element.get("ident")
-                self.logger.debug("- Generating desciption for "+ curr_name)
-                elem_type = self.get_type(element, curr_name)
-                start_line = int(element.get("start-line"))
-                #check for flags defined in union's scope
-                if ((start_line - end_line) > 1) and ("int" in prev_elem_type):                       
-                    enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
-                    if enum_name is None:
-                        self.logger.debug("- Generating desciption for "+ curr_name)
-                        elem_type = self.get_type(element, curr_name)                        
+            if name not in self.union_defs.keys():
+                self.logger.warning("[*] Building union: " + name)
+                elements = {}
+                prev_elem_name = "nill"
+                if child.get("start-line") is None:
+                    self.logger.warning("[!] This UNION has NO Definition: " + name)
+                    return
+                strct_strt = int(child.get("start-line"))
+                if child.get("end-line") is None:
+                    self.logger.warning("[!] This UNION has NO Definition: " + name)
+                    return
+                strct_end = int(child.get("end-line"))
+                end_line = strct_strt
+                prev_elem_type = "None"
+                # get the type of each element in union
+                for element in child:
+                    curr_name = element.get("ident")
+                    if curr_name is None:
+                        curr_name = "default_name"
+                    self.logger.debug("- Generating description for " + curr_name)
+                    elem_type = self.get_type(element, curr_name)
+                    if element.get("start-line") is None:
+                        # set element to be builtin base type
+                        self.logger.warning("[!] This UNION has NO Definition: " + curr_name)
+                        elem_type = type_dict[element.get("base-type-builtin")]
+                        start_line = end_line
                     else:
-                        elements[prev_elem_name]= enum_name
-                end_line = int(element.get("end-line"))
-                elements[curr_name] = str(elem_type)
-                prev_elem_name = curr_name
-                prev_elem_type = elem_type
-
-            if (strct_end - start_line) > 1:
-                enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
-                if enum_name is None:
-                    self.logger.debug("- Generating desciption for "+ curr_name)
-                    elem_type = self.get_type(element, curr_name)                        
-                else:
-                    elements[prev_elem_name]= enum_name
-            #check for the elements which store length of an array or buffer
-            for element in elements:
-                len_grp = len_regx.match(element)
-                if len_grp is not None:
-                    buf_name = len_grp.groups()[0]
-                    matches = [search_str for search_str in elements if re.search(buf_name, search_str)] 
-                    for i in matches:
-                        if i is not element:
-                            if elements[element] in type_dict.values():
-                                elem_type = "len[" + i + ", " + elements[element] + "]"
-                            elif "flags" in elements[element]:
-                                basic_type = elements[element].split(",")[-1][:-1].strip()
-                                elem_type = "len[" + i + ", " + basic_type + "]"
+                        start_line = int(element.get("start-line"))
+                        # check for flags defined in union's scope
+                        if ((start_line - end_line) > 1) and ("int" in prev_elem_type):
+                            enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
+                            if enum_name is None:
+                                self.logger.debug("- Generating description for " + curr_name)
+                                elem_type = self.get_type(element, curr_name)
                             else:
-                                self.logger.warning("[*] Len type unhandled")
-                                elem_type = "None"
-                            elements[element] = elem_type
-            self.union_defs[name] = [child, elements]
-        return str(name)
+                                elements[prev_elem_name] = enum_name
+                        end_line = int(element.get("end-line"))
+                        elements[curr_name] = str(elem_type)
+                        prev_elem_name = curr_name
+                        prev_elem_type = elem_type
+
+                    if (strct_end - start_line) > 1:
+                        enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
+                        if enum_name is None:
+                            self.logger.debug("- Generating description for " + curr_name)
+                            elem_type = self.get_type(element, curr_name)
+                        else:
+                            elements[prev_elem_name] = enum_name
+                    # check for the elements which store length of an array or buffer
+                for element in elements:
+                    len_grp = len_regx.match(element)
+                    if len_grp is not None:
+                        buf_name = len_grp.groups()[0]
+                        matches = [search_str for search_str in elements if re.search(buf_name, search_str)]
+                        for i in matches:
+                            if i is not element:
+                                if elements[element] in type_dict.values():
+                                    elem_type = "len[" + i + ", " + elements[element] + "]"
+                                elif "flags" in elements[element]:
+                                    basic_type = elements[element].split(",")[-1][:-1].strip()
+                                    elem_type = "len[" + i + ", " + basic_type + "]"
+                                else:
+                                    self.logger.warning("[*] Len type unhandled")
+                                    elem_type = "None"
+                                elements[element] = elem_type
+                self.union_defs[name] = [child, elements]
+            return str(name)
+        except Exception as e:
+            self.logger.error(e)
+            self.logger.warning("[!] Error occurred while resolving the union: " + name)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            # in case of linux, this error can occur if the struct has not been found anywhere in the code
+            # in this case, we will default to long
+            # print os_type
+            if self.sysobj.os_type == 2:
+                self.structs_defs[name] = None
+                print("defaulting to long")
+                return "long"
 
     def pretty_func(self):
         func_str = ""
         for func in self.functions.keys():
             func_str += func + "("
-            func_str += ", ".join([name + " " + str(desc) for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+            func_str += ", ".join([name + " " + str(desc) for name, desc in
+                                   zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
             if self.functions[func][1] is not None:
                 func_str += str(self.functions[func][0])
-            func_str+="\n"
+            func_str += "\n"
         return func_str
 
     def pretty_structs_unions(self):
@@ -571,7 +617,6 @@ class Descriptions(object):
         :return:
         """
 
-       
         self.logger.debug("[*] Pretty printing structs and unions ")
         pretty = ""
         for key in self.structs_defs:
@@ -580,36 +625,34 @@ class Descriptions(object):
                 print("key with the name " + key + " not found")
                 continue
             node = self.structs_defs[key][0]
-            element_names = self.structs_defs[key][1].keys()                
+            element_names = self.structs_defs[key][1].keys()
             strct_strt = int(node.get("start-line"))
             strct_end = int(node.get("end-line"))
-            #get flags in vicinity of structs for ioctls
+            # get flags in vicinity of structs for ioctls
             if self.sysobj.input_type == "ioctl":
                 self.find_flags(key, element_names, strct_strt, strct_end)
-                #predictions fopossible_flagsr uncategorised flags
+                # predictions fopossible_flagsr uncategorised flags
                 self.possible_flags(key)
-            for element in self.structs_defs[key][1]: 
-                element_str += "\t" + element + "\t" + self.structs_defs[key][1][element] + "\n" 
+            for element in self.structs_defs[key][1]:
+                element_str += "\t" + element + "\t" + self.structs_defs[key][1][element] + "\n"
             elements = " {\n" + element_str + "}\n"
             pretty += (str(key) + str(elements) + "\n")
         for key in self.union_defs:
             element_str = ""
             node = self.union_defs[key][0]
-            element_names = self.union_defs[key][1].keys()                
+            element_names = self.union_defs[key][1].keys()
             union_strt = int(node.get("start-line"))
             union_end = int(node.get("end-line"))
-            #get flags in vicinity of unions for ioctls
+            # get flags in vicinity of unions for ioctls
             if self.sysobj.input_type == "ioctl":
                 self.find_flags(key, element_names, union_strt, union_end)
-                #predictions for uncategorised flags
+                # predictions for uncategorised flags
                 self.possible_flags(key)
             for element in self.union_defs[key][1]:
                 element_str += "\t" + element + "\t" + self.union_defs[key][1][element] + "\n"
             elements = " [\n" + element_str + "]\n"
             pretty += (str(key) + str(elements) + "\n")
         return pretty
-        
-
 
     def pretty_ioctl(self, fd):
         """
@@ -666,9 +709,10 @@ class Descriptions(object):
                 flags_defn += flg_name + " = " + ", ".join(self.gflags[flg_name]) + "\n"
         if func_descriptions is not None:
             desc_buf = "# Copyright 2018 syzkaller project authors. All rights reserved.\n# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.\n# Autogenerated by sys2syz\n\n"
-            desc_buf += "\n".join([includes, rsrc, open_desc, func_descriptions, self.pretty_func() ,struct_descriptions, flags_defn])
-            output_file_path = os.path.join(os.getcwd(),"out", self.sysobj.os, "dev_" + dev_name + ".txt")
-            output_file = open( output_file_path, "w")
+            desc_buf += "\n".join(
+                [includes, rsrc, open_desc, func_descriptions, self.pretty_func(), struct_descriptions, flags_defn])
+            output_file_path = os.path.join(os.getcwd(), "out", self.sysobj.os, "dev_" + dev_name + ".txt")
+            output_file = open(output_file_path, "w")
             output_file.write(desc_buf)
             output_file.close()
             return output_file_path
@@ -690,14 +734,14 @@ class Descriptions(object):
             parsed_command = str(command).split(", ")
             self.ptr_dir, cmd, h_file, argument = parsed_command
             self.header_files.append(h_file)
-            #for ioctl type is: IOR_, IOW_, IOWR_
+            # for ioctl type is: IOR_, IOW_, IOWR_
             if self.ptr_dir != "null":
-                
-                #Get the type of argument                
+
+                # Get the type of argument
                 argument_def = argument.split(" ")[-1].strip()
-                #when argument is of general type as defined in type_dict
+                # when argument is of general type as defined in type_dict
                 self.logger.debug("[*] Generating descriptions for " + cmd + ", args: " + argument_def)
-                #if argument_name is an array
+                # if argument_name is an array
                 if "[" in argument_def:
                     argument_def = argument_def.split("[")
                     argument_name = argument_def[0]
@@ -722,12 +766,12 @@ class Descriptions(object):
                             self.logger.warning("[!] No argument for this command " + cmd)
                             arg_str = ""
                         else:
-                            arg_str = "ptr[" + self.ptr_dir + ", "+ ptr_def+ "]"
+                            arg_str = "ptr[" + self.ptr_dir + ", " + ptr_def + "]"
                         self.arguments[cmd] = arg_str
                     else:
                         self.logger.warning("[!] Could not find arg definitions for " + cmd)
                         self.arguments[cmd] = ""
-            #for IO_ ioctls as they don't have any arguments
+            # for IO_ ioctls as they don't have any arguments
             else:
                 self.arguments[cmd] = None
         return True
@@ -745,17 +789,17 @@ class Descriptions(object):
         args_name = self.target + "_args"
         syscall_root = self.get_root(args_name)
         for element in syscall_root:
-                #if element is found in the tree call get_type 
-                #function, to find the type of argument for descriptions
+            # if element is found in the tree call get_type
+            # function, to find the type of argument for descriptions
             if element.get("ident") == args_name:
                 for child in element:
                     self.logger.debug("- Function argument: " + child.get('ident'))
-                    syscall_args[child.get('ident')]=self.get_syscall_arg(child.get('base-type'))
+                    syscall_args[child.get('ident')] = self.get_syscall_arg(child.get('base-type'))
                 break
         self.functions[self.target] = [syscall_args, None]
         flag_str = ""
         for flg_name in self.gflags:
-                flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
+            flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
         func_str = self.pretty_func()
         struct_union_str = self.pretty_structs_unions()
         print("--------------Description--------------\n")
@@ -767,6 +811,3 @@ class Descriptions(object):
                 element_base = self.resolve_id(self.current_root, element.get('base-type'))
                 for child in element_base:
                     return self.get_type(child)
-
-        
-         
