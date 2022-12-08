@@ -1,5 +1,7 @@
 # Module : Description.py 
 # Description : Contains functions which generate descriptions.
+import sys
+
 from core.utils import *
 from core.logger import get_logger
 
@@ -66,13 +68,16 @@ class Descriptions(object):
             self.logger.error(e)
             self.logger.warning('[*] Unable to find root')
 
-    def resolve_id(self, root, find_id):
+    def resolve_id(self, root, find_id=None):
         """
         Find node having id value same as <find_id>, used for finding ident parameter for elements
         :return: node
         """
 
         try:
+            if find_id is None:
+                print("returning the root ", root)
+                return root
             for element in root:
                 if element.get("id") == find_id:
                     return element
@@ -90,21 +95,26 @@ class Descriptions(object):
         """
 
         try:
+            if root is None:
+                return None
             for element in root:
                 #if element is found in the tree call get_type 
                 #function, to find the type of argument for descriptions
                 if element.get("ident") == find_ident:
-                    self.logger.debug("- Generating desciption for "+ find_ident)
-                    return self.get_type(element), element
+                    self.logger.warning("- Generating desciption for "+ find_ident)
+                    generatedType = self.get_type(element), element
+                    # print the generatedType as a str
+                    print(str(generatedType))
+                    return generatedType
                 for child in element:
                     if child.get("ident") == find_ident:
-                        self.logger.debug("- Generating desciption for "+ find_ident)
+                        self.logger.warning("- Generating desciption for child"+ find_ident)
                         return self.get_type(child), child
             self.logger.debug("TO-DO: Find again")
             self.get_id(self.current_root, find_ident)
         except Exception as e:
             self.logger.error(e)
-            self.logger.warning("[!] Issue in resolving: %s", find_ident)
+            self.logger.warning("[!] ***********Issue in resolving: %s", find_ident)
 
     def get_type(self, child, default_name=None):
         """
@@ -120,7 +130,9 @@ class Descriptions(object):
             #for unions: need to define each element present in union (build_union)
             elif child.get("type") == "union":
                 self.logger.debug("TO-DO: union")
-                return self.build_union(child, default_name)
+                retVal = self.build_union(child, default_name)
+                if retVal is None:
+                    return "long" # default to long
             #for functions
             elif child.get("type") == "function":
                 self.logger.debug("TO-DO: function")
@@ -158,7 +170,13 @@ class Descriptions(object):
                 return self.get_type(root, default_name=default_name)
         except Exception as e:
             self.logger.error(e)
-            self.logger.warning("[!] Error occured while fetching the type")
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            self.logger.info("[!] Error occured while fetching the type")
+            if self.sysobj.os_type == 2:
+                print("defaulting to long")
+                return "long"
 
     def instruct_flags(self, strct_name, name, strt_line, end_line, flg_type):
         try:
@@ -338,7 +356,10 @@ class Descriptions(object):
                     x = self.get_type(self.resolve_id(self.current_root,child.get("base-type")), default_name)
                 else:
                     x = self.get_type(self.resolve_id(self.current_root,child.get("base-type")))
-                ptr_str = "ptr[" + self.ptr_dir + ", " + x + "]"
+                if x is None:
+                    ptr_str = "ptr[" + self.ptr_dir + ", " + "int64" + "]"
+                else:
+                    ptr_str = "ptr[" + self.ptr_dir + ", " + x + "]"
             return ptr_str
         except Exception as e:
             self.logger.error(e)
@@ -384,30 +405,46 @@ class Descriptions(object):
             if name is None:
                 name = default_name
             if name not in self.structs_defs.keys():
-                self.logger.debug("[*] Building struct: " + name)
+                self.logger.warning("[*] Building struct: " + name)
                 self.structs_defs[name] = []
                 elements = {}
                 prev_elem_name = "nill"
+                if child.get("start-line") is None:
+                    self.logger.warning("[!] This Struct has NO Definition: " + name)
+                    return
                 strct_strt = int(child.get("start-line"))
+                if child.get("end-line") is None:
+                    self.logger.warning("[!] This Struct has NO Definition: " + name)
+                    return
                 strct_end = int(child.get("end-line"))
                 end_line = strct_strt
                 prev_elem_type = "None"
                 #get the type of each element in struct
                 for element in child:
                     curr_name = element.get("ident")
-                    self.logger.debug("- Generating desciption for "+ curr_name)
+                    if curr_name is None:
+                        curr_name = "default_name"
+                    self.logger.warning("- Generating description for "+ curr_name)
                     elem_type = self.get_type(element, curr_name)
-                    start_line = int(element.get("start-line"))
-                    #check for flags defined in struct's scope,
-                    #possibility of flags only when prev_elem_type has 'int' keyword 
-                    if ((start_line - end_line) > 1) and ("int" in prev_elem_type):
-                        enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
-                        if enum_name is None:
-                            self.logger.debug("- Generating desciption for "+ curr_name)
-                            elem_type = self.get_type(element, curr_name)                        
-                        else:
-                            elements[prev_elem_name]= enum_name
-                    end_line = int(element.get("end-line"))
+                    print("RECEIVED ELEMENT TYPE: " + str(elem_type) + " FOR ELEMENT: " + str(curr_name))
+                    if element.get("start-line") is None:
+                        # set element to be builtin base type
+                        self.logger.warning("[!] This Struct has NO Definition: " + curr_name)
+                        elem_type = type_dict[element.get("base-type-builtin")]
+                    else:
+                        start_line = int(element.get("start-line"))
+                        #check for flags defined in struct's scope,
+                        #possibility of flags only when prev_elem_type has 'int' keyword
+                        if ((start_line - end_line) > 1) and ("int" in str(prev_elem_type)):
+                            enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
+                            if enum_name is None:
+                                self.logger.debug("- Generating desciption for "+ curr_name)
+                                elem_type = self.get_type(element, curr_name)
+                            else:
+                                elements[prev_elem_name]= enum_name
+                        end_line = int(element.get("end-line"))
+                    if str(elem_type) == "None":
+                        elem_type = "int64"
                     elements[curr_name] = str(elem_type)
                     prev_elem_name = curr_name
                     prev_elem_type = elem_type
@@ -434,13 +471,24 @@ class Descriptions(object):
                                     elem_type = "len[" + i + ", " + basic_type + "]"
                                 else:
                                     self.logger.warning("[*] Len type unhandled")
-                                    elem_type = "None"
+                                    elem_type = "long"
                                 elements[element] = elem_type
                 self.structs_defs[name] = [child, elements]
             return str(name)
         except Exception as e:
             self.logger.error(e)
-            self.logger.warning("[!] Error occured while resolving the struct: " + name)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            self.logger.info("[!] Error occured while resolving the struct: " + name)
+            # in case of linux, this error can occur if the struct has not been found anywhere in the code
+            # in this case, we will default to long
+            # print os_type
+            print("os_type is " + self.sysobj.os_type)
+            if self.sysobj.os_type == 2:
+                self.structs_defs[name] = None
+                print("defaulting to long")
+                return "long"
 
     def build_union(self, child, default_name="Default"):
         """
@@ -511,9 +559,9 @@ class Descriptions(object):
         func_str = ""
         for func in self.functions.keys():
             func_str += func + "("
-            func_str += ", ".join([name + " " + desc for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+            func_str += ", ".join([name + " " + str(desc) for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
             if self.functions[func][1] is not None:
-                func_str += self.functions[func][0]
+                func_str += str(self.functions[func][0])
             func_str+="\n"
         return func_str
 
@@ -527,7 +575,10 @@ class Descriptions(object):
         self.logger.debug("[*] Pretty printing structs and unions ")
         pretty = ""
         for key in self.structs_defs:
-            element_str = ""                
+            element_str = ""
+            if self.structs_defs[key] is None or len(self.structs_defs[key]) < 2:
+                print("key with the name " + key + " not found")
+                continue
             node = self.structs_defs[key][0]
             element_names = self.structs_defs[key][1].keys()                
             strct_strt = int(node.get("start-line"))
@@ -575,7 +626,7 @@ class Descriptions(object):
                     fd_ = "fd " + fd
                     cmd = "cmd const[" + key + "]"
                     arg = ""
-                    if self.arguments[key] is not None:
+                    if self.arguments[key] is not None and str(self.arguments[key]) != "":
                         arg = "arg " + str(self.arguments[key])
                         desc_str += ", ".join([fd_, cmd, arg])
                     else:
@@ -608,7 +659,11 @@ class Descriptions(object):
         func_descriptions = str(self.pretty_ioctl(fd_str))
         struct_descriptions = str(self.pretty_structs_unions())
         for flg_name in self.gflags:
-            flags_defn += flg_name + " = " + ", ".join(self.gflags[flg_name]) + "\n"           
+            # check if os is linux
+            if self.sysobj.os == "linux":
+                flags_defn += flg_name + " = " + str(self.gflags[flg_name]) + "\n"
+            else:
+                flags_defn += flg_name + " = " + ", ".join(self.gflags[flg_name]) + "\n"
         if func_descriptions is not None:
             desc_buf = "# Copyright 2018 syzkaller project authors. All rights reserved.\n# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.\n# Autogenerated by sys2syz\n\n"
             desc_buf += "\n".join([includes, rsrc, open_desc, func_descriptions, self.pretty_func() ,struct_descriptions, flags_defn])
@@ -663,9 +718,15 @@ class Descriptions(object):
                         ptr_def = raw_arg[0]
                         if type(argument_def) == list:
                             ptr_def = "array[" + raw_arg[0] + ", " + argument_def[1].split("]")[0] + "]"
-                        
-                        arg_str = "ptr[" + self.ptr_dir + ", "+ ptr_def+ "]"
+                        if ptr_def is None:
+                            self.logger.warning("[!] No argument for this command " + cmd)
+                            arg_str = ""
+                        else:
+                            arg_str = "ptr[" + self.ptr_dir + ", "+ ptr_def+ "]"
                         self.arguments[cmd] = arg_str
+                    else:
+                        self.logger.warning("[!] Could not find arg definitions for " + cmd)
+                        self.arguments[cmd] = ""
             #for IO_ ioctls as they don't have any arguments
             else:
                 self.arguments[cmd] = None

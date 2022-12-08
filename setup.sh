@@ -44,7 +44,7 @@ do
 						echo "[+] NetBSD source code path: $SRC_PATH"
 						cd $SRC_PATH
 						#run bear command
-						bear -- ./build.sh -j4 -m amd64 -u -U -T ../tools/ -O ../obj/ -R ../release -D ../dest release
+						bear ./build.sh -j4 -m amd64 -u -U -T ../tools/ -O ../obj/ -R ../release -D ../dest release
 						#if bear command is successful, move the compile_commands.json to the compile_commands folder
 						if [ $? -eq 0 ]
 						then
