@@ -19,17 +19,18 @@ class Ioctl(object):
     IOWR = 4
     types = {IO: 'null', IOW: 'in', IOR: 'out', IOWR: 'inout', LNX: 'inout'}
 
-    def __init__(self, gtype, filename, command, iomatch_groups=None, sysobj=None, target=None):
-        self.description = None
+    def __init__(self, gtype, filename, command, description=None, sysobj=None, target=None):
+        self.description = description
         self.os_name = sysobj.os_type
         self.typedefs = sysobj.typedefs
         self.type = gtype
         self.command = command
         self.filename = filename
         self.target = target
+        self.sysobj = sysobj
 
     def __repr__(self):
-        if self.os_name == 2:  # 2 is linux
+        if self.os_name == 2 and self.description is None:  # 2 is linux
             self.description = self.get_linux_ioctl_structs(self.command)
             print("The description is : " + str(self.description))
         return str(self.types[self.type]) + ", " + str(self.command) + ", " + str(self.filename) + ", " + str(
@@ -214,6 +215,7 @@ class Extractor(object):
         r"#define(\s|\t)+([A-Z_0-9]*)[\t|\s]+(?!_IOWR|_IOR|_IOW|_IO|\()[0-9]*x?[a-z0-9]*")  # define(\s|\t)+([A-Z_0-9]*)[\t\s]+([^_IOWR{][0-9]*)")#define(\s|\t)+([^_][A-Z_0-9]*)\t*\s*.*")
 
     def __init__(self, sysobj):
+        self.ioctls_headers = []
         if sysobj.os_type == 2:  # 2 is linux, 1 is netbsd
             self.ioctl_trap_prefix = sysobj.ioctl_trap_prefix
         self.sysobj = sysobj
@@ -253,6 +255,7 @@ class Extractor(object):
                 if io_match:
                     self.ioctls.append(
                         Ioctl(Ioctl.IO, file, io_match.groups()[0].strip(), None, self.sysobj, self.sysobj.target))
+                    self.ioctls_headers.append(file)
                     continue
 
                 ior_match = self.ioctl_regex_type[self.ioctl_type]["ior"].match(line)
@@ -260,6 +263,7 @@ class Extractor(object):
                     self.ioctls.append(
                         Ioctl(Ioctl.IOR, file, ior_match.groups()[0].strip(), ior_match.groups()[-1], self.sysobj,
                               self.sysobj.target))
+                    self.ioctls_headers.append(file)
                     continue
 
                 iow_match = self.ioctl_regex_type[self.ioctl_type]["iow"].match(line)
@@ -267,6 +271,7 @@ class Extractor(object):
                     self.ioctls.append(
                         Ioctl(Ioctl.IOW, file, iow_match.groups()[0].strip(), iow_match.groups()[-1], self.sysobj,
                               self.sysobj.target))
+                    self.ioctls_headers.append(file)
                     continue
 
                 iowr_match = self.ioctl_regex_type[self.ioctl_type]["iowr"].match(line)
@@ -274,6 +279,7 @@ class Extractor(object):
                     self.ioctls.append(
                         Ioctl(Ioctl.IOWR, file, iowr_match.groups()[0].strip(), iowr_match.groups()[-1], self.sysobj,
                               self.sysobj.target))
+                    self.ioctls_headers.append(file)
                     continue
                 if self.os_type == 2 and self.ioctl_regex_type[self.ioctl_type]["lnx"].match(line) \
                         and self.ioctl_trap_prefix is not None:
@@ -287,6 +293,7 @@ class Extractor(object):
                     if trap_index in line:
                         self.ioctls.append(
                             Ioctl(Ioctl.LNX, file, line.split()[1].strip(), None, self.sysobj, self.sysobj.target))
+                    self.ioctls_headers.append(file)
                     continue
 
     @property

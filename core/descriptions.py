@@ -1,5 +1,6 @@
 # Module : Description.py 
 # Description : Contains functions which generate descriptions.
+import shelve
 import sys
 
 from core.utils import *
@@ -719,15 +720,46 @@ class Descriptions(object):
         else:
             return None
 
+    def isFileAGoodCandidate(self, Intertingfile):
+        """
+        Checks if a file is a good candidate for parsing
+        :param file: File to check
+        :return: True if file is a good candidate, False otherwise
+        """
+        #remove .xml extension and append .c extension
+        Intertingfile = Intertingfile[:-4] + ".c"
+        #check if file exists
+        try:
+            for root, dirs, files in  os.walk(self.target):
+                for file in files:
+                    if file.endswith(".c") and Intertingfile == file:
+                        # open this file
+                        with open(os.path.join(root, file), "r") as fd:
+                            # read lines from file
+                            lines = fd.readlines()
+                            # check if lines contains "#include" and any of the ioctl calls
+                            for line in lines:
+                                if "#include" in line:
+                                    for ioctl_header in self.sysobj.header_files:
+                                        if ioctl_header in line:
+                                            return True
+        except IOError:
+            self.logger.error("Unable to read the file '%s'", file)
+            return False
     def ioctl_run(self):
         """
         Parses arguments and structures for ioctl calls
         :return: True
         """
         self.xml_dir = self.sysobj.out_dir
+        # Find the xml file youre interested in
         for xml_file in (os.listdir(self.xml_dir)):
-            tree = ET.parse(join(self.xml_dir, xml_file))
-            self.trees[tree] = xml_file
+            if self.isFileAGoodCandidate(xml_file):
+                tree = ET.parse(join(self.xml_dir, xml_file))
+                print("Considering XML FILE " + xml_file)
+                self.trees[tree] = xml_file
+            else:
+                print("Not considering XML FILE " + xml_file)
         self.flag_descriptions = self.sysobj.macro_details
         self.ioctls = self.sysobj.ioctls
         for command in self.ioctls:
