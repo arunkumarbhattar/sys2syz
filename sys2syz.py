@@ -66,9 +66,9 @@ class Sys2syz(object):
             bool: Reflect passed or failed
         """
         # if os_name is linux, trap_prefix should Not be None
-        if self.os_type == self.LINUX and self.ioctl_trap_prefix is None:
-            logging.critical("Trap prefix is required for Linux")
-            return False
+        # if self.os_type == self.LINUX and self.ioctl_trap_prefix is None:
+        #     logging.critical("Trap prefix is required for Linux")
+        #     return False
 
         if self.input_type == "ioctl":
             if not os.path.isdir(self.target):
@@ -210,6 +210,7 @@ def main():
         # TODO: change the descriptions object so that it take sysobj as constructor parameter
         # TODO: change the functions in the object so they use self.sysobj.macro_details to get the detials
 
+        # Generate descriptions, --> WE GON NEED TO OPTIMIZE THIS -->
         # Get syz-lang descriptions
         if not sysobj.generate_descriptions():
             logging.error("Exiting")

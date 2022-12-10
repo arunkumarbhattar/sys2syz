@@ -275,7 +275,8 @@ class Extractor(object):
                         Ioctl(Ioctl.IOWR, file, iowr_match.groups()[0].strip(), iowr_match.groups()[-1], self.sysobj,
                               self.sysobj.target))
                     continue
-                if self.os_type == 2 and self.ioctl_regex_type[self.ioctl_type]["lnx"].match(line):
+                if self.os_type == 2 and self.ioctl_regex_type[self.ioctl_type]["lnx"].match(line) \
+                        and self.ioctl_trap_prefix is not None:
                     # get the line as a string
                     line = line.strip()
                     self.logger.critical("line is %s", line)
