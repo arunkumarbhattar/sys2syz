@@ -10,7 +10,10 @@ import os
 class C2xml(object):
     def __init__(self, sysobj):
         self.sysobj = sysobj
-        self.target = sysobj.target
+        if self.sysobj.input_type == "ioctl":
+            self.target = sysobj.target
+        else:
+            self.target = "syscalls"
         self.output_path = sysobj.out_dir
         self.logger = get_logger("C2xml", sysobj.log_level)
 
@@ -20,7 +23,11 @@ class C2xml(object):
         :return:
         """
         cwd = os.getcwd()
-        preprocessed_path = join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", basename(self.target))
+        if self.sysobj.os_type == 1:
+            preprocessed_path = join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", basename(self.target))
+        else:
+            preprocessed_path = join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", "syscalls")
+
         if not dir_exists(self.output_path):
             os.makedirs(self.output_path)
         for filename in os.listdir(preprocessed_path):

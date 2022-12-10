@@ -46,6 +46,8 @@ class Descriptions(object):
         if self.sysobj.input_type == "ioctl":
             self.ioctls = sysobj.ioctls
             self.flag_descriptions = sysobj.macro_details
+        else:
+            self.defines_dict = sysobj.defines_dict
 
     def get_root(self, ident_name):
         """
@@ -676,29 +678,33 @@ class Descriptions(object):
         Parses arguments and structures for ioctl calls
         :return: True
         """
-        syscall_args = {}
         self.xml_dir = self.sysobj.out_dir
-        for xml_file in (os.listdir(self.xml_dir)):
+
+        for syscall in self.defines_dict.keys():
+
+            syscall_args = {}
+            target_file = self.defines_dict[syscall].split('/')[-1].split('.')[0] + '.xml'
+            xml_file = os.path.join(self.xml_dir, target_file)
             tree = ET.parse(join(self.xml_dir, xml_file))
-            self.trees[tree] = xml_file
-        args_name = self.target + "_args"
-        syscall_root = self.get_root(args_name)
-        for element in syscall_root:
-                #if element is found in the tree call get_type 
-                #function, to find the type of argument for descriptions
-            if element.get("ident") == args_name:
-                for child in element:
-                    self.logger.debug("- Function argument: " + child.get('ident'))
-                    syscall_args[child.get('ident')]=self.get_syscall_arg(child.get('base-type'))
-                break
-        self.functions[self.target] = [syscall_args, None]
-        flag_str = ""
-        for flg_name in self.gflags:
-                flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
-        func_str = self.pretty_func()
-        struct_union_str = self.pretty_structs_unions()
-        print("--------------Description--------------\n")
-        print("\n".join([func_str, struct_union_str, flag_str]))
+            # self.trees[tree] = xml_file
+            args_name = self.target + "_args"
+            syscall_root = self.get_root(args_name)
+            for element in syscall_root:
+                    #if element is found in the tree call get_type 
+                    #function, to find the type of argument for descriptions
+                if element.get("ident") == args_name:
+                    for child in element:
+                        self.logger.debug("- Function argument: " + child.get('ident'))
+                        syscall_args[child.get('ident')]=self.get_syscall_arg(child.get('base-type'))
+                    break
+            self.functions[self.target] = [syscall_args, None]
+            flag_str = ""
+            for flg_name in self.gflags:
+                    flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
+            func_str = self.pretty_func()
+            struct_union_str = self.pretty_structs_unions()
+            print("--------------Description--------------\n")
+            print("\n".join([func_str, struct_union_str, flag_str]))
 
     def get_syscall_arg(self, base_id):
         for element in self.resolve_id(self.current_root, base_id):

@@ -52,14 +52,21 @@ class Bear(object):
             return False
 
         json_obj = json.loads(all_cont)
+
+        # target name = device name (i2c, usb, ....)
+        # target path = partial folder path of "target name" - this is matched with source file names in JSON
         if self.sysobj.input_type =="ioctl":
             target_name = os.path.basename(self.target)
             if self.sysobj.os_type == 1:
                 target_path = "/dev/" + target_name
             elif self.sysobj.os_type == 2:
                 target_path = "drivers/" + target_name
+        # sources_list = list of all relevant C files containing syscalls
         else:
-            target_name = self.target
+            target_name = "syscalls"
+            linux_root = self.target.find("linux/")
+            target_path = ""
+            sources_list = list(set(val for val in self.sysobj.defines_dict.values()))
         
         output_path = os.path.join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", target_name)
 
@@ -69,8 +76,20 @@ class Bear(object):
 
         for curr_command in json_obj:
             src_file = curr_command["file"]
-            if target_path in src_file:
+            if (src_file.endswith(".c")
+                and ((self.sysobj.os_type == 1 and target_path in src_file) 
+                    or (self.sysobj.os_type == 2 and src_file in sources_list)
+                )
+            ):
                 flag = 1
+                work_dir = curr_command["directory"]
+                output_file = output_path + "/"+ src_file.split("/")[-1].split(".")[0] + ".i" 
+                int_file = os.path.join(work_dir, src_file.split(".")[0] + ".i")
+
+                # if os.path.exists(int_file):
+                #     commands.append(CompilationCommand(['cat',int_file], work_dir, int_file, output_file))
+                #     self.logger.debug("[*] I file already exists for " + src_file.split("/")[-1] + "...copy to preprocessed")
+                #     continue
                 curr_args = curr_command["arguments"]
                 args = []
                 i = 0
@@ -87,8 +106,7 @@ class Bear(object):
                         curr_args.remove(del_arg)
                     i += 1
                 curr_args[0] += (" -fdirectives-only -E")
-                work_dir = curr_command["directory"]
-                output_file = output_path + "/"+ src_file.split("/")[-1].split(".")[0] + ".i" 
+                
                 self.logger.debug("[*] Extracting commands for " + src_file.split("/")[-1] )
                 commands.append(CompilationCommand(curr_args, work_dir, src_file, output_file))
         
