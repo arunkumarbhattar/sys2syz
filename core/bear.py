@@ -66,7 +66,7 @@ class Bear(object):
             target_name = "syscalls"
             linux_root = self.target.find("linux/")
             target_path = ""
-            sources_list = list(set(val for val in self.sysobj.defines_dict.values()))
+            sources_list = list(set(val[0] for val in self.sysobj.defines_dict.values()))
         
         output_path = os.path.join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", target_name)
 
@@ -74,6 +74,7 @@ class Bear(object):
             os.makedirs(output_path)
         flag = 0
 
+        found_sources = []
         for curr_command in json_obj:
             src_file = curr_command["file"]
             if (src_file.endswith(".c")
@@ -82,6 +83,7 @@ class Bear(object):
                 )
             ):
                 flag = 1
+                found_sources.append(src_file)
                 work_dir = curr_command["directory"]
                 output_file = output_path + "/"+ src_file.split("/")[-1].split(".")[0] + ".i" 
                 int_file = os.path.join(work_dir, src_file.split(".")[0] + ".i")
@@ -110,6 +112,13 @@ class Bear(object):
                 self.logger.debug("[*] Extracting commands for " + src_file.split("/")[-1] )
                 commands.append(CompilationCommand(curr_args, work_dir, src_file, output_file))
         
+        temp_dict = {}
+        if self.sysobj.os_type == 2:
+            for keys in self.sysobj.defines_dict.keys():
+                if self.sysobj.defines_dict[keys][0] in found_sources:
+                    temp_dict[keys] = self.sysobj.defines_dict[keys]
+        self.sysobj.defines_dict = temp_dict
+
         if flag == 0:
             self.logger.error("Unable to find the target in compile_commands.json")
             return False

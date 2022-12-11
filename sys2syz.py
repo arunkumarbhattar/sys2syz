@@ -142,6 +142,11 @@ class Sys2syz(object):
         
         if self.input_type == "syscall":
             self.descriptions.syscall_run()
+            output_path = self.descriptions.pretty_syscall()
+            if Utils.file_exists(output_path, True):
+                logging.info("[+] Description file: " + output_path)
+                return True
+            return False
         
         return True
         '''except Exception as e:
@@ -225,13 +230,13 @@ def main():
             sys.exit(-1)
         sysobj.defines_dict = sysobj.syscall.defines_dict
         
-        # if not sysobj.preprocess_files():
-        #     logging.error("Can't continue.. Exiting")
-        #     sys.exit(-1)
+        if not sysobj.preprocess_files():
+            logging.error("Can't continue.. Exiting")
+            sys.exit(-1)
         
-        # if not sysobj.create_xml_files():
-        #     logging.error("Can't continue.. Exiting")
-        #     sys.exit(-1)
+        if not sysobj.create_xml_files():
+            logging.error("Can't continue.. Exiting")
+            sys.exit(-1)
         
         if not sysobj.generate_descriptions():
             logging.error("Exiting")
