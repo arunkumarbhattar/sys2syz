@@ -26,7 +26,9 @@ type_dict = {
     "int": "int32",
     "unsigned long": "intptr",
     "long": "intptr",
-    "void": "void"
+    "void": "void",
+    "__u64": "int64",
+    "__u32": "int32"
 }
 
 
@@ -128,7 +130,8 @@ class Descriptions(object):
         Fetch type of an element
         :return:
         """
-
+        if default_name == "default_name":
+            return "int64"
         try:
             # for structures: need to define each element present in struct (build_struct)
             if child.get("type") == "struct":
@@ -154,7 +157,7 @@ class Descriptions(object):
                     try:
                         type_str = type_dict[child.get('base-type-builtin')]
                     except KeyError:
-                        type_str = "unsigned long long"
+                        type_str = "intptr"#TODO: change this to intptr
                 else:
                     root = self.resolve_id(self.current_root, child.get("base-type"))
                     type_str = self.get_type(root)
@@ -408,6 +411,8 @@ class Descriptions(object):
                 func_str +=  base_type'''
         self.functions[func_name] = [func_args, func_ret]
         return func_name
+    def checkname(name):
+        return "res" if name == "resource" else name
 
     def build_struct(self, child, default_name="Deafult"):
         """
@@ -442,8 +447,11 @@ class Descriptions(object):
                     curr_name = element.get("ident")
                     if curr_name is None:
                         curr_name = "default_name"
-                    self.logger.warning("- Generating description for " + curr_name)
-                    elem_type = self.get_type(element, curr_name)
+                        print("Name resolution failed for union element" + str(element))
+                        elem_type = "int64"
+                    else:
+                        self.logger.warning("- Generating description for " + curr_name)
+                        elem_type = self.get_type(element, curr_name)
                     print("RECEIVED ELEMENT TYPE: " + str(elem_type) + " FOR ELEMENT: " + str(curr_name))
                     if element.get("start-line") is None:
                         # set element to be builtin base type
@@ -539,8 +547,11 @@ class Descriptions(object):
                     curr_name = element.get("ident")
                     if curr_name is None:
                         curr_name = "default_name"
-                    self.logger.debug("- Generating description for " + curr_name)
-                    elem_type = self.get_type(element, curr_name)
+                        print("Name resolution failed for union element" + str(element))
+                        elem_type = "int64"
+                    else:
+                        self.logger.debug("- Generating description for " + curr_name)
+                        elem_type = self.get_type(element, curr_name)
                     if element.get("start-line") is None:
                         # set element to be builtin base type
                         self.logger.warning("[!] This UNION has NO Definition: " + curr_name)
@@ -605,7 +616,7 @@ class Descriptions(object):
         func_str = ""
         for func in self.functions.keys():
             func_str += func + "("
-            func_str += ", ".join([name + " " + str(desc) for name, desc in
+            func_str += ", ".join([self.checkname(name) + " " + str(desc) for name, desc in
                                    zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
             if self.functions[func][1] is not None:
                 func_str += str(self.functions[func][0])
@@ -667,7 +678,7 @@ class Descriptions(object):
             if self.arguments is not None:
                 for key in self.arguments:
                     desc_str = "ioctl$" + key + "("
-                    fd_ = "fd " + fd
+                    fd_ = "fd " + fd.replace("-", "_")
                     cmd = "cmd const[" + key + "]"
                     arg = ""
                     if self.arguments[key] is not None and str(self.arguments[key]) != "":
@@ -696,10 +707,10 @@ class Descriptions(object):
             includes += "include <" + include_path + h_file + ">\n"
         dev_name = self.target.split("/")[-1]
         fd_str = "fd_" + dev_name
-        rsrc = "resource " + fd_str + "[fd]\n"
-        open_desc = "openat$" + dev_name.lower()
-        open_desc += "(fd const[AT_FDCWD], file ptr[in, string[\"/dev/" + dev_name + "\"]], "
-        open_desc += "flags flags[open_flags], mode const[0]) fd_" + dev_name + "\n"
+        rsrc = "resource " + fd_str.replace("-", "_") + "[fd]\n"
+        open_desc = "openat$" + dev_name.lower().replace("-", "_")
+        open_desc += "(fd const[AT_FDCWD], file ptr[in, string[\"/dev/" + dev_name.replace("-", "_") + "\"]], "
+        open_desc += "flags flags[open_flags], mode const[0]) fd_" + dev_name.replace("-", "_") + "\n"
         func_descriptions = str(self.pretty_ioctl(fd_str))
         struct_descriptions = str(self.pretty_structs_unions())
         for flg_name in self.gflags:
@@ -770,13 +781,18 @@ class Descriptions(object):
             if self.ptr_dir != "null":
 
                 # Get the type of argument
-                argument_def = argument.split(" ")[-1].strip()
+                argument_def = argument.split(" ")[-1].strip() # if argument is ", int )" --> this would return ""
+                if argument_def == "":
+                    argument_def = argument.strip()
                 # when argument is of general type as defined in type_dict
                 self.logger.debug("[*] Generating descriptions for " + cmd + ", args: " + argument_def)
                 # if argument_name is an array
                 if "[" in argument_def:
                     argument_def = argument_def.split("[")
                     argument_name = argument_def[0]
+                    argument_name = argument_name.strip()
+                    if argument_name == "int":
+                        argument_name = "long"
                 elif "*" == argument_def:
                     if "void" in argument:
                         arg_str = "buf[" + self.ptr_dir + "]"

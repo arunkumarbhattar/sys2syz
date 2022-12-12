@@ -202,7 +202,10 @@ class Extractor(object):
             "iow": re.compile(r"#define\s+(.*)\s+_IOW\((.*),\s+(.*),\s+(.*)\).*"),  # regex for IOW_
             "ior": re.compile(r"#define\s+(.*)\s+_IOR\((.*),\s+(.*),\s+(.*)\).*"),  # regex for IOR_
             "iowr": re.compile(r"#define\s+(.*)\s+_IOWR\((.*),\s+(.*),\s+(.*)\).*"),  # regex for IOWR_
-            "lnx": re.compile(r"#define\s+[A-Za-z0-9_]+\s+0x[0-9]+", re.IGNORECASE)
+            "lnx": re.compile(r"#define\s+[A-Za-z0-9_]+\s+0x[0-9]+", re.IGNORECASE),
+            "lnx_amdkfd_ior": re.compile(r"\s*[A-Za-z0-9]+_IOR\(\s*0x[0-9]*\s*\\*,\s*\\*\s*(.*)", re.IGNORECASE),
+            "lnx_amdkfd_iow": re.compile(r"\s*[A-Za-z0-9]+_IOW\(\s*0x[0-9]*\s*\\*,\s*\\*\s*(.*)", re.IGNORECASE),
+            "lnx_amdkfd_iowr": re.compile(r"\s*[A-Za-z0-9]+_IOWR\(\s*0x[0-9]*\s*\\*,\s*\\*\s*(.*)", re.IGNORECASE)
         }
     }
 
@@ -237,7 +240,7 @@ class Extractor(object):
         Fetch the ioctl commands with their arguments and sort them on the basis of their type
         :return:
         """
-
+        lineCont = ""
         for file in self.header_files:
             try:
                 fd = open(join(self.target, file), "r")
@@ -295,6 +298,37 @@ class Extractor(object):
                             Ioctl(Ioctl.LNX, file, line.split()[1].strip(), None, self.sysobj, self.sysobj.target))
                     self.ioctls_headers.append(file)
                     continue
+                if self.os_type == 2:
+
+                    if "\\" and "#define" in line:
+                        #temporarily store this line
+                        #remove "#define" and "\"
+                        lineCont = line.replace("#define", "")
+                        lineCont = lineCont.replace("\\", "")
+                        lineCont = lineCont.strip()
+
+                    ior_match = self.ioctl_regex_type[self.ioctl_type]["lnx_amdkfd_ior"].match(line)
+                    if ior_match:
+                        self.ioctls.append(
+                            Ioctl(Ioctl.IOR, file, lineCont, ior_match.groups()[-1].replace("\\", "").replace(")", "").strip(), self.sysobj,
+                                  self.sysobj.target))
+                        self.ioctls_headers.append(file)
+                        continue
+                    iow_match = self.ioctl_regex_type[self.ioctl_type]["lnx_amdkfd_iow"].match(line)
+                    if iow_match:
+                        self.ioctls.append(
+                            Ioctl(Ioctl.IOW, file, lineCont, iow_match.groups()[-1].replace("\\", "").replace(")", "").strip(), self.sysobj,
+                                  self.sysobj.target))
+                        self.ioctls_headers.append(file)
+                        continue
+                    iowr_match = self.ioctl_regex_type[self.ioctl_type]["lnx_amdkfd_iowr"].match(line)
+                    if iowr_match:
+                        self.ioctls.append(
+                            Ioctl(Ioctl.IOWR, file, lineCont, iowr_match.groups()[-1].replace("\\", "").replace(")", "").strip(), self.sysobj,
+                                  self.sysobj.target))
+                        self.ioctls_headers.append(file)
+                        continue
+
 
     @property
     def header_files(self) -> list:
