@@ -39,7 +39,9 @@ type_dict = {
 'signed long long int':'int64',
 'unsigned long long':'int64',
 'unsigned long long int':'int64',
-'void':'void'
+'void':'void',
+'__u64':'int64',
+'__u32':'int32',
 }
 # To add, if needed - 'float','double','long double'
 
@@ -70,6 +72,8 @@ class Descriptions(object):
         if self.sysobj.input_type == "ioctl":
             self.ioctls = sysobj.ioctls
             self.flag_descriptions = sysobj.macro_details
+        else:
+            self.func_consts = {}
 
     def get_root(self, ident_name):
         """
@@ -346,7 +350,7 @@ class Descriptions(object):
         try:
             self.logger.debug("[*] Building pointer")
             if self.sysobj.input_type == "syscall":
-                self.ptr_dir = "in"# input("Enter pointer direction: ")
+                self.ptr_dir = "inout"# input("Enter pointer direction: ")
             #pointer is a builtin type
             if "base-type-builtin" in child.attrib.keys():
                 base_type = child.get("base-type-builtin")
@@ -543,17 +547,33 @@ class Descriptions(object):
             self.union_defs[name] = [child, elements]
         return str(name)
 
-    def checkname(name):
+    def checkname(self, name):
         return "res" if name == "resource" else name
+
+    def checkdesc(self, desc, name, const_var, func):
+        if name == const_var:
+            return 'flags['+func+'_'+name+'_flag]'
+        else:
+            return desc if desc is not None else 'void'
+
 
     def pretty_func(self):
         func_str = ""
         for func in self.functions.keys():
-            func_str += func + "("
-            func_str += ", ".join([self.checkname(name) + " " + desc for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
-            if self.functions[func][1] is not None:
-                func_str += self.functions[func][0]
-            func_str+="\n"
+            if func in self.func_consts:
+                const_var = self.func_consts[func][0]
+                func_str += func + "("
+                func_str += ", ".join([self.checkname(name) + " " + self.checkdesc(desc,name,const_var,func) for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+                self.gflags[func+'_'+const_var+'_flag'] = self.func_consts[func][1]
+                if self.functions[func][1] is not None:
+                    func_str += self.functions[func][0]
+                func_str+="\n"
+            else:
+                func_str += func + "("
+                func_str += ", ".join([self.checkname(name) + " " + desc for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+                if self.functions[func][1] is not None:
+                    func_str += self.functions[func][0]
+                func_str+="\n"
         return func_str
 
     def pretty_structs_unions(self):
@@ -633,14 +653,20 @@ class Descriptions(object):
             self.logger.warning("[!] Error in parsing ioctl command descriptions")
 
     def pretty_syscall(self):
-        flag_str = ""
-        for flg_name in self.gflags:
-                flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
         func_str = self.pretty_func()
         struct_union_str = self.pretty_structs_unions()
+        flag_str = ""
+        includes = ""
+        for flg_name in self.gflags:
+            if len(self.gflags[flg_name]) == 1: # debug this corner case. Why no header?
+                flag_str += flg_name + " = " + ','.join(self.gflags[flg_name]) + "\n"
+            else:
+                flag_str += flg_name + " = " + ','.join(self.gflags[flg_name][0]) + "\n"
+                if self.gflags[flg_name][1] != "":
+                    includes += '#include <' + self.gflags[flg_name][1] + '>\n'
         output_file_path = os.path.join(os.getcwd(),"out", self.sysobj.os, "syscalls.txt")
         output_file = open( output_file_path, "w")
-        output_file.write("\n".join([func_str, struct_union_str, flag_str]))
+        output_file.write("\n".join([includes, func_str, struct_union_str, flag_str]))
         output_file.close()
         return output_file_path
 
@@ -728,6 +754,87 @@ class Descriptions(object):
                 self.arguments[cmd] = None
         return True
 
+    def find_macro_header(self, macro, linenum):
+        include_regex = re.compile(r"#[0-9\s]*\"(.*).h\"")
+        for i in range(linenum,-1,-1):
+            robj = include_regex.match(self.curr_lines[i])
+            if robj:
+                return robj.group(1).strip("./") + '.h'
+        return ""
+
+    def find_switches(self, func, fp=None, depth=0):
+        if fp is None:
+            fp = open(self.current_file,'r')
+            self.curr_lines = fp.readlines()
+
+        startline = int(func.get("start-line"))
+        
+        possible_const = {}
+
+        switch_regex = re.compile(r"[\s\t]*switch[\s\t]*\((.*)\)")
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        funccall_regex = re.compile(r"[\s\t=]+([a-zA-Z0-9_]*)\((.*)\)")
+        # find in this function itself
+        cmd = ""
+        scope_count = 0
+        i = startline
+        func_scope = False
+        if '{' in self.curr_lines[i-1]:
+            func_scope = True
+            
+        while(1):
+            curr_line = self.curr_lines[i]
+            if '{' in self.curr_lines[i] and func_scope == False:
+                func_scope = True
+            if '}' in self.curr_lines[i] and func_scope == True:
+                func_scope_count = False
+                break
+            mobj = switch_regex.findall(self.curr_lines[i])
+            if mobj and mobj[0] in [child.get("ident") for child in func]:
+                cases = []
+                if '{' in self.curr_lines[i]:
+                    scope_count += 1
+                i += 1
+                while(1):
+                    if '{' in self.curr_lines[i]:
+                        scope_count += 1
+                    if '}' in self.curr_lines[i]:
+                        scope_count -= 1
+                    if scope_count == 0:
+                        break
+                    cobj = case_regex.findall(self.curr_lines[i])
+                    if cobj:
+                        cases.append(cobj[0])
+                    
+                    i += 1
+                header = self.find_macro_header(cases[0], startline)
+                fp.close()
+                return (mobj[0], (cases,header))
+
+            if depth == 0:
+                fobj = funccall_regex.findall(self.curr_lines[i])
+                if fobj:
+                    args = [args.strip(" \t") for args in fobj[0][1].split(',')]
+                    name = fobj[0][0]
+                    next_func = None
+                    for element in self.current_root:
+                        if element.get("ident") == name:
+                            next_func = self.resolve_id(self.current_root, element.get("base-type"))
+                            break
+                    if next_func is not None:
+                        child_consts = self.find_switches(next_func, fp, 1)
+                        # check if any returned constants are func's arguments
+                        if child_consts is not None:
+                            for child in func:
+                                if child.get("ident") == child_consts[0]:
+                                    fp.close()
+                                    return child_consts
+            
+            i += 1
+
+        fp.close()
+        return None
+
     def syscall_run(self):
         """
         Parses arguments and structures for ioctl calls
@@ -750,15 +857,19 @@ class Descriptions(object):
             # self.current_fp.close()
 
             self.logger.debug("[+] Building function : " + syscall)
-            if syscall == "adjtimex":
-                print("Processing adjtimex!!!")
             # args_name = self.target + "_args"
             # syscall_root = self.get_root(args_name)
             for element in self.current_root:
                     #if element is found in the tree call get_type 
                     #function, to find the type of argument for descriptions
                 if element.get("ident") == '__do_sys_'+syscall and element.get("type") == "node":
+                    if syscall == 'ioctl':
+                        print("Break")
                     funcelement = self.resolve_id(self.current_root, element.get('base-type'))
+                    # if len(funcelement) > 0:
+                    possible_const = self.find_switches(funcelement)
+                    if possible_const is not None:
+                        self.func_consts[syscall] = possible_const
                     for child in funcelement:
                         if(child.get('ident') == "__unused"):   # special case, no real arguments
                             continue
@@ -767,28 +878,3 @@ class Descriptions(object):
                     break
             self.functions[syscall] = [syscall_args, None]
         return True
-
-    def get_syscall_arg(self, base_id):
-        for element in self.resolve_id(self.current_root, base_id):
-            if element.get('ident') == "le":
-                element_base = self.resolve_id(self.current_root, element.get('base-type'))
-                for child in element_base:
-                    return self.get_type(child)
-
-    def get_macro(self, token) -> string:
-        all_cont = self.current_fp.readlines()
-        for element in self.current_root:
-            if element.get("ident") == token and element.get("type") == "macro":
-                def_start = all_cont[int(element.get("start-line"))-1].find(element.get("ident")) + len(element.get("ident"))
-                define = all_cont[int(element.get("start-line"))-1][def_start:].strip(" \n\t")
-                for i in range(int(element.get("start-line")), int(element.get("end-line"))):
-                    define = define[:-2] + all_cont[i].strip(" \n\t")
-                return define
-
-    def replace_macros(self, arglist) -> list:
-        newargs = []
-        for args in arglist:
-            tokens = args.split(' ')
-            newtokens = [tok if tok in basic_type_keywords else self.get_macro(tok) for tok in tokens]
-            newargs.append(' '.join(newtokens))
-        return newargs

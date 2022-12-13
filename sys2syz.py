@@ -218,8 +218,6 @@ def main():
 
     if sysobj.input_type == "syscall":
 
-        # file_name = sysobj.syscall.find_file()
-
         if not sysobj.get_syscalls(args.systbl):
             logging.error("No syscalls found - check syscall.tbl file! Exiting...")
             sys.exit(-1)
