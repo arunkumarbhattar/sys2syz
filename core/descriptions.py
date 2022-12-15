@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 import re
 import os
 import string
+import clang.cindex as cindex
+import sys
  
 type_dict = {
 'bool':'bool8',
@@ -756,17 +758,124 @@ class Descriptions(object):
 
     def find_macro_header(self, macro, linenum):
         include_regex = re.compile(r"#[0-9\s]*\"(.*).h\"")
-        for i in range(linenum,-1,-1):
-            robj = include_regex.match(self.curr_lines[i])
+        # find macro first
+        i = linenum
+        for i in range(linenum, -1, -1):
+            if '#define '+macro in self.curr_lines[i]:
+                break
+        if i == linenum:
+            sys.exit(-1)    # fatal error - #define macro not found in .i file
+        
+        for j in range(i,-1,-1):
+            robj = include_regex.match(self.curr_lines[j])
             if robj:
                 return robj.group(1).strip("./") + '.h'
         return ""
 
-    def find_switches(self, func, fp=None, depth=0):
-        if fp is None:
-            fp = open(self.current_file,'r')
-            self.curr_lines = fp.readlines()
+    def find_func_cursor(self, root, name):
+        ret = []
+        if root.kind == cindex.CursorKind.FUNCTION_DECL and root.spelling == name:
+            return root
+        else:
+            for child in root.get_children():
+                if child.kind == cindex.CursorKind.FUNCTION_DECL and child.spelling == name:
+                    ret.append(child)
+                '''
+                ASSUMPTION! - All function definitions are immediate children of root
+                If false, uncomment below code
+                '''
+                # found = find_func_cursor(child, name)
+                # if found is not None:
+                # 	ret.append(found)
+            # if len(ret) == 0 :
+            # 	return None
+            # else:
+            # 	return ret
+        return ret
 
+    def get_cases(self, switchnode):
+        caselines = []
+        for child in switchnode.get_children():
+            if child.kind == cindex.CursorKind.COMPOUND_STMT:
+                for cases in child.get_children():
+                    if cases.kind == cindex.CursorKind.CASE_STMT:
+                        caselines.append(cases.location.line)
+                break
+        return caselines
+
+    def find_switches(self, node, args):
+        ''' Return (switch arg, case linenums)'''
+        if node.kind == cindex.CursorKind.SWITCH_STMT:  # check if its switching based on arguments
+            found = 0
+            for child in node.get_children():
+                if child.displayname in args:
+                    found = 1
+                    break
+            if found == 0:
+                return None
+            else:
+                return (child.displayname, self.get_cases(node))
+        else:
+            for child in node.get_children():
+                ret = self.find_switches(child, args)
+                if ret is not None:
+                    return ret
+        return None
+
+    def recurse_functions(self, root, func, args):
+        for child in func.get_children():
+            if child.kind == cindex.CursorKind.CALL_EXPR:
+                ret = self.check_switches(child.spelling, root, 1)
+                if ret is not None and ret[0] in args:
+                    return ret
+            else:
+                ret = self.recurse_functions(root, child, args)
+                if ret is not None:
+                    return ret
+        return None                
+
+    def check_switches(self, name, root=None, depth=0):
+        ''' Return (switch arg, (caselist, headerfile) 
+            Assumption - all case macros are defined in same header file
+        '''
+
+        if root is None:
+            index = cindex.Index.create()
+            tu = index.parse(self.current_file)
+            root = tu.cursor
+        
+        func_cursor = self.find_func_cursor(root, name)
+        if not func_cursor:
+            return None # probably an inbuilt function being called. Skip
+        else:
+            func_cursor = func_cursor[-1]
+
+        func_args = [child.displayname for child in func_cursor.get_children() if child.kind == cindex.CursorKind.PARM_DECL]
+        switch_cases = self.find_switches(func_cursor, func_args)
+        if switch_cases is None and depth == 0:
+            # TO-DO : recursively find inside functions
+            switch_cases = self.recurse_functions(root, func_cursor, func_args)
+            return switch_cases
+        elif switch_cases is None and depth == 1:
+            return None
+        
+        fp = open(self.current_file,'r')
+        self.curr_lines = fp.readlines()
+        
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        caselines = switch_cases[1]
+        cases = []
+        for linenum in caselines:
+            line = self.curr_lines[linenum-1]
+            cobj = case_regex.match(line)
+            if cobj:
+                cases.append(cobj.group(1))
+            else:
+                sys.exit(-1)    # fatal error - no case match in case statement
+        header = self.find_macro_header(cases[0], caselines[0])
+        return (switch_cases[0], (cases, header))
+
+        '''
         startline = int(func.get("start-line"))
         
         possible_const = {}
@@ -822,7 +931,7 @@ class Descriptions(object):
                             next_func = self.resolve_id(self.current_root, element.get("base-type"))
                             break
                     if next_func is not None:
-                        child_consts = self.find_switches(next_func, fp, 1)
+                        child_consts = self.check_switches(next_func, fp, 1)
                         # check if any returned constants are func's arguments
                         if child_consts is not None:
                             for child in func:
@@ -834,6 +943,7 @@ class Descriptions(object):
 
         fp.close()
         return None
+        '''
 
     def syscall_run(self):
         """
@@ -863,18 +973,17 @@ class Descriptions(object):
                     #if element is found in the tree call get_type 
                     #function, to find the type of argument for descriptions
                 if element.get("ident") == '__do_sys_'+syscall and element.get("type") == "node":
-                    if syscall == 'ioctl':
-                        print("Break")
-                    funcelement = self.resolve_id(self.current_root, element.get('base-type'))
-                    # if len(funcelement) > 0:
-                    possible_const = self.find_switches(funcelement)
-                    if possible_const is not None:
-                        self.func_consts[syscall] = possible_const
-                    for child in funcelement:
+                    args_present = False
+                    for child in self.resolve_id(self.current_root, element.get('base-type')):
                         if(child.get('ident') == "__unused"):   # special case, no real arguments
                             continue
                         self.logger.debug("- Function argument: " + child.get('ident'))
                         syscall_args[child.get('ident')] = self.get_type(child) # self.get_syscall_arg(child)
+                        args_present = True
+                    if args_present:
+                        possible_const = self.check_switches(element.get("ident"), None, 0)
+                        if possible_const is not None:
+                            self.func_consts[syscall] = possible_const
                     break
             self.functions[syscall] = [syscall_args, None]
         return True
