@@ -828,8 +828,6 @@ class Descriptions(object):
                     argument = definition
                     parsed_command[0] = direction
                     self.ptr_dir = direction
-                    self.logger.info(
-                        "[*] Generating descriptions for " + cmd + ", args: " + definitionWithDirection)
                 else:
                     parsed_command[3] = ""
             self.header_files.append(h_file)
