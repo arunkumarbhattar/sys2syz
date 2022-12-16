@@ -95,11 +95,9 @@ class Sys2syz(object):
         Returns:
             bool: True is ioctls were found
         """
-        self.typedefs = self.extractor.fetch_typedef_structs_from_header()
         self.extractor.get_ioctls()
         self.ioctls = self.extractor.ioctls
         self.ioctls_headers = self.extractor.ioctls_headers
-        logging.info(f"[+] {len(self.typedefs)} Typedef definitions were found!")
         if len(self.ioctls) == 0:
             return False
 

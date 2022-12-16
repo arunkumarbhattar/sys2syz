@@ -392,41 +392,6 @@ class Extractor(object):
 
         # return the macros found, except the IOCTL command macros in header files
         return list(set(undefined_macros) - set(self.command_macros))
-
-    def fetch_typedef_structs_from_header(self):
-        """
-        Fetch all the typedef structs defined in the header files
-        :return:
-        """
-        structs = []
-        for file in self.header_files:
-            try:
-                fd = open(join(self.target, file), "r")
-                # print filename
-                print("Processing file : " + file)
-                content = fd.readlines()
-                fd.close()
-            except IOError:
-                self.logger.error("Unable to read the file '%s'", file)
-                self.logger.critical("Skipping this file")
-                continue
-            isInsideTypedef = False
-            for line in content:
-                if "typedef " in line:
-                    isInsideTypedef = True
-                if isInsideTypedef and "} " in line:
-                    isInsideTypedef = False
-                    # this line contains the typedef of the struct or union definition
-                    # print line
-                    # remove "}" and ";" from the line
-                    line = line.replace("}", "").replace(";", "")
-                    # remove space from the line
-                    line = line.replace(" ", "")
-                    #strip new line specifiers
-                    line = line.strip()
-                    print("Discovered typedef struct/union --> " + line)
-                    structs.append(line)
-        return structs
     def flag_details(self, flags_defined):
         """
         Stores the macros within a particular scope of struct etc. in tuples with the corresponding line numbers.

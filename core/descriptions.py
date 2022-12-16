@@ -806,10 +806,7 @@ class Descriptions(object):
         for xml_file in (os.listdir(self.xml_dir)):
             if self.isFileAGoodCandidate(xml_file):
                 tree = ET.parse(join(self.xml_dir, xml_file))
-                print("Considering XML FILE " + xml_file)
                 self.trees[tree] = xml_file
-            else:
-                print("Not considering XML FILE " + xml_file)
         self.flag_descriptions = self.sysobj.macro_details
         self.ioctls = self.sysobj.ioctls
         for command in self.ioctls:
@@ -831,7 +828,7 @@ class Descriptions(object):
                     argument = definition
                     parsed_command[0] = direction
                     self.ptr_dir = direction
-                    self.logger.critical(
+                    self.logger.info(
                         "[*] Generating descriptions for " + cmd + ", args: " + definitionWithDirection)
                 else:
                     parsed_command[3] = ""
@@ -844,7 +841,7 @@ class Descriptions(object):
                 if argument_def == "":
                     argument_def = argument.strip()
                 # when argument is of general type as defined in type_dict
-                self.logger.debug("[*] Generating descriptions for " + cmd + ", args: " + argument_def)
+                self.logger.info("[*] Generating descriptions for " + cmd + ", args: " + argument_def)
                 # if argument_name is an array
                 if "[" in argument_def:
                     argument_def = argument_def.split("[")
@@ -1114,7 +1111,7 @@ class Descriptions(object):
                     for token in child.get_tokens():
                         # print("LINE: " + str(token.spelling) + " " + str(token.location.line))
                         if IOCTL_NAME == str(token.spelling):
-                            self.logger.critical(
+                            self.logger.info(
                                 "[*] Found IOCTL [" + IOCTL_CMD + "] case Handler: " + str(token.spelling))
                             # iterate through extent until you find a call expression to a function
                             foundIOCTLCase = True
@@ -1130,7 +1127,7 @@ class Descriptions(object):
                                 FunctionName = str(token.spelling)
                                 if FunctionName == "copy_from_user" or FunctionName == "copy_to_user":
                                     # we got it now
-                                    self.logger.critical("[*] Found IOCTL case KERNEL COPY STMT: " + str(FunctionName))
+                                    self.logger.info("[*] Found IOCTL case KERNEL COPY STMT: " + str(FunctionName))
                                     for functionArg_token in tu.get_tokens(extent=token.cursor.referenced.extent):
                                         if functionArg_token.kind == cindex.TokenKind.IDENTIFIER \
                                                 and functionArg_token.cursor.kind == cindex.CursorKind.PARM_DECL:
@@ -1170,7 +1167,7 @@ class Descriptions(object):
                             and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
                         if token.spelling == "copy_from_user" or token.spelling == "copy_to_user":
                             # we found it
-                            self.logger.critical(
+                            self.logger.info(
                                 "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(token.spelling))
                             FunctionName = token.spelling
                             if FunctionName == "copy_from_user":
@@ -1202,7 +1199,7 @@ class Descriptions(object):
                             ioctlArg = ioctlArg.split("*")[0]
 
                         ioctlArg = ioctlArg.strip()
-                        self.logger.critical(
+                        self.logger.info(
                             "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
                         return ioctlArg + " " + Direction
 
