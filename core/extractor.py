@@ -19,7 +19,7 @@ class Ioctl(object):
     IOWR = 4
     types = {IO: 'null', IOW: 'in', IOR: 'out', IOWR: 'inout', LNX: 'inout'}
 
-    def __init__(self, gtype, filename, command, description=None, sysobj=None, target=None):
+    def __init__(self, gtype, filename, command, description=None, sysobj=None, target=None, IOCTL_TRAP=0):
         self.description = description
         self.os_name = sysobj.os_type
         self.typedefs = sysobj.typedefs
@@ -28,13 +28,14 @@ class Ioctl(object):
         self.filename = filename
         self.target = target
         self.sysobj = sysobj
+        self.IOCTL_TRAP = IOCTL_TRAP
 
     def __repr__(self):
         if self.os_name == 2 and self.description is None:  # 2 is linux
-            self.description = self.get_linux_ioctl_structs(self.command)
+            #self.description = self.get_linux_ioctl_structs(self.command)
             print("The description is : " + str(self.description))
         return str(self.types[self.type]) + ", " + str(self.command) + ", " + str(self.filename) + ", " + str(
-            self.description)
+            self.description) + ", " + str(self.IOCTL_TRAP)
 
 
     def c_files(self) -> list:
@@ -288,14 +289,22 @@ class Extractor(object):
                         and self.ioctl_trap_prefix is not None:
                     # get the line as a string
                     line = line.strip()
-                    self.logger.critical("line is %s", line)
-                    # get the linux trap index as a string
                     trap_index = str(self.ioctl_trap_prefix)
                     self.logger.critical("trap index is %s", trap_index)
                     # check if trap_index is a substring of line
                     if trap_index in line:
+                        # fetch space separated words
+                        words = line.split()
+                        # the last word is the IOCTL TRAP NUMBER
+                        # the word containing the trap index is the IOCTL TRAP NAME
+                        for word in words:
+                            if trap_index in word:
+                                ioctl_trap = word
+                                ioctl_trap = ioctl_trap
+                        # print ioctl name and trap
+                        self.logger.critical("ioctl_trap %d for ioctl %s", ioctl_trap, words[1])
                         self.ioctls.append(
-                            Ioctl(Ioctl.LNX, file, line.split()[1].strip(), None, self.sysobj, self.sysobj.target))
+                        Ioctl(Ioctl.LNX, file, line.split()[1].strip(), None, self.sysobj, self.sysobj.target, ioctl_trap))
                     self.ioctls_headers.append(file)
                     continue
                 if self.os_type == 2:

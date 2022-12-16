@@ -12,23 +12,41 @@ import xml.etree.ElementTree as ET
 import re
 import os
 import string
+import clang.cindex as cindex
+import sys
 
 type_dict = {
-    "bool": "bool8",
-    "unsigned char": "int8",
-    "signed char": "int8",
-    "char": "int8",
-    "short": "int16",
-    "unsigned short": "int16",
-    "signed short": "int16",
-    "uint32_t": "int32",
-    "unsigned int": "int32",
-    "int": "int32",
-    "unsigned long": "intptr",
-    "long": "intptr",
-    "void": "void",
-    "__u64": "int64",
-    "__u32": "int32"
+    'bool': 'bool8',
+    'char': 'int8',
+    'signed char': 'int8',
+    'unsigned char': 'int8',
+    'short': 'int16',
+    'short int': 'int16',
+    'signed short': 'int16',
+    'signed short int': 'int16',
+    'unsigned short': 'int16',
+    'unsigned short int': 'int16',
+    'int': 'int32',
+    'signed': 'int32',
+    'signed int': 'int32',
+    'unsigned': 'int32',
+    'unsigned int': 'int32',
+    'uint32_t': 'int32',
+    'long': 'intptr',
+    'long int': 'intptr',
+    'signed long': 'intptr',
+    'signed long int': 'intptr',
+    'unsigned long': 'intptr',
+    'unsigned long int': 'intptr',
+    'long long': 'int64',
+    'long long int': 'int64',
+    'signed long long': 'int64',
+    'signed long long int': 'int64',
+    'unsigned long long': 'int64',
+    'unsigned long long int': 'int64',
+    'void': 'void',
+    '__u64': 'int64',
+    '__u32': 'int32'
 }
 
 
@@ -157,7 +175,7 @@ class Descriptions(object):
                     try:
                         type_str = type_dict[child.get('base-type-builtin')]
                     except KeyError:
-                        type_str = "intptr"#TODO: change this to intptr
+                        type_str = "intptr"  # TODO: change this to intptr
                 else:
                     root = self.resolve_id(self.current_root, child.get("base-type"))
                     type_str = self.get_type(root)
@@ -411,6 +429,7 @@ class Descriptions(object):
                 func_str +=  base_type'''
         self.functions[func_name] = [func_args, func_ret]
         return func_name
+
     def checkname(name):
         return "res" if name == "resource" else name
 
@@ -737,11 +756,11 @@ class Descriptions(object):
         :param file: File to check
         :return: True if file is a good candidate, False otherwise
         """
-        #remove .xml extension and append .c extension
+        # remove .xml extension and append .c extension
         Intertingfile = Intertingfile[:-4] + ".c"
-        #check if file exists
+        # check if file exists
         try:
-            for root, dirs, files in  os.walk(self.target):
+            for root, dirs, files in os.walk(self.target):
                 for file in files:
                     if file.endswith(".c") and Intertingfile == file:
                         # open this file
@@ -757,6 +776,26 @@ class Descriptions(object):
         except IOError:
             self.logger.error("Unable to read the file '%s'", file)
             return False
+
+    def FetchIoctlDescriptionsFromAST(self, IOCTL_CMD, IOCTL_NAME, PreprocessedFileDir):
+        # iterate over all the files in the directory
+        preprocessedFiles = []
+        IoctlDefinitions = None
+        for root, dirs, files in os.walk(PreprocessedFileDir):
+            # fetch all the files ending with .i
+            for file in files:
+                if file.endswith(".i") and not file.startswith("."):
+                    preprocessedFiles.append(file)
+        IoctlDefinitions = None
+        # iterate over all the files
+        for file in preprocessedFiles:
+            IoctlDefinitions = self.check_ioctl_switches(IOCTL_CMD=IOCTL_CMD, IOCTL_TRAP=IOCTL_NAME,
+                                                         file_=os.path.join(PreprocessedFileDir, file))
+            if IoctlDefinitions is not None:
+                return IoctlDefinitions
+        if IoctlDefinitions is None:
+            return ""
+
     def ioctl_run(self):
         """
         Parses arguments and structures for ioctl calls
@@ -775,13 +814,33 @@ class Descriptions(object):
         self.ioctls = self.sysobj.ioctls
         for command in self.ioctls:
             parsed_command = str(command).split(", ")
-            self.ptr_dir, cmd, h_file, argument = parsed_command
+            self.ptr_dir, cmd, h_file, argument, IOCTL_TRAP = parsed_command
+            if argument == "None":
+                # move one directory back
+                preprocessDir = os.path.normpath(self.xml_dir + os.sep + os.pardir)
+                definitionWithDirection = self.FetchIoctlDescriptionsFromAST(IOCTL_CMD=cmd,
+                                                                             IOCTL_NAME=IOCTL_TRAP,
+                                                                             PreprocessedFileDir=preprocessDir)
+
+                # remove the direction from the definition
+                if (definitionWithDirection is not None) and (definitionWithDirection != ""):
+
+                    definition = definitionWithDirection.split(" ")[0]
+                    direction = definitionWithDirection.split(" ")[1]
+                    parsed_command[3] = definition
+                    argument = definition
+                    parsed_command[0] = direction
+                    self.ptr_dir = direction
+                    self.logger.critical(
+                        "[*] Generating descriptions for " + cmd + ", args: " + definitionWithDirection)
+                else:
+                    parsed_command[3] = ""
             self.header_files.append(h_file)
             # for ioctl type is: IOR_, IOW_, IOWR_
             if self.ptr_dir != "null":
 
                 # Get the type of argument
-                argument_def = argument.split(" ")[-1].strip() # if argument is ", int )" --> this would return ""
+                argument_def = argument.split(" ")[-1].strip()  # if argument is ", int )" --> this would return ""
                 if argument_def == "":
                     argument_def = argument.strip()
                 # when argument is of general type as defined in type_dict
@@ -823,6 +882,389 @@ class Descriptions(object):
             else:
                 self.arguments[cmd] = None
         return True
+
+    def find_macro_header(self, macro, linenum):
+        include_regex = re.compile(r"#[0-9\s]*\"(.*).h\"")
+        # find macro first
+        i = linenum
+        for i in range(linenum, -1, -1):
+            if '#define ' + macro in self.curr_lines[i]:
+                break
+        if i == linenum:
+            sys.exit(-1)  # fatal error - #define macro not found in .i file
+
+        for j in range(i, -1, -1):
+            robj = include_regex.match(self.curr_lines[j])
+            if robj:
+                return robj.group(1).strip("./") + '.h'
+        return ""
+
+    def find_func_cursor(self, root, name):
+        ret = []
+        if root.kind == cindex.CursorKind.FUNCTION_DECL and root.spelling == name:
+            return root
+        else:
+            for child in root.get_children():
+                if child.kind == cindex.CursorKind.FUNCTION_DECL and child.spelling == name:
+                    ret.append(child)
+        return ret
+
+    def find_ioctl_case_cursor(self, root, Ioctl_trap_number):
+        ret = []
+        if root.kind == cindex.CursorKind.CASE_STMT:
+            # get the integer literal value of the case statement
+            for child in root.get_children():
+                if child.kind == cindex.CursorKind.INTEGER_LITERAL and child.spelling == Ioctl_trap_number:
+                    ret.append(child)
+        return ret
+
+    def get_cases(self, switchnode):
+        caselines = []
+        for child in switchnode.get_children():
+            if child.kind == cindex.CursorKind.COMPOUND_STMT:
+                for cases in child.get_children():
+                    if cases.kind == cindex.CursorKind.CASE_STMT:
+                        caselines.append(cases.location.line)
+                break
+        return caselines
+
+    def find_switches(self, node, args):
+        ''' Return (switch arg, case linenums)'''
+        if node.kind == cindex.CursorKind.SWITCH_STMT:  # check if its switching based on arguments
+            found = 0
+            for child in node.get_children():
+                if child.displayname in args:
+                    found = 1
+                    break
+            if found == 0:
+                return None
+            else:
+                return (child.displayname, self.get_cases(node))
+        else:
+            for child in node.get_children():
+                ret = self.find_switches(child, args)
+                if ret is not None:
+                    return ret
+        return None
+
+    def recurse_functions(self, root, func, args):
+        for child in func.get_children():
+            if child.kind == cindex.CursorKind.CALL_EXPR:
+                ret = self.check_switches(child.spelling, root, 1)
+                if ret is not None and ret[0] in args:
+                    return ret
+            else:
+                ret = self.recurse_functions(root, child, args)
+                if ret is not None:
+                    return ret
+            return None
+
+    def recurse_ioctl_functions_and_return_struct_type(self, func, IoctlArg):
+        for child in func.get_children():
+            if child.kind == cindex.CursorKind.CALL_EXPR:
+                # the criteria to break out of recursion is in the function body of the call expression
+                # there is either a "call_from_user" or a "call_to_user" function call
+                if child.spelling == "call_from_user" or child.spelling == "call_to_user":
+                    IoctlArg.append(child.spelling)
+                    # fetch the arguments of this function call
+                    for arg in child.get_children():
+                        # look for a cast expression in the arguments
+                        if arg.kind == cindex.CursorKind.CAST_EXPR:
+                            # fetch the type of the cast expression
+                            for cast in arg.get_children():
+                                if cast.kind == cindex.CursorKind.TYPE_REF:
+                                    # if the cast type is a pointer
+                                    if cast.type.kind == cindex.TypeKind.POINTER:
+                                        # fetch the type of the pointer
+                                        for ptr in cast.get_children():
+                                            if ptr.kind == cindex.CursorKind.TYPE_REF:
+                                                # if the pointer type is a struct
+                                                if ptr.type.kind == cindex.TypeKind.RECORD:
+                                                    # fetch the name of the struct
+                                                    for struct in ptr.get_children():
+                                                        if struct.kind == cindex.CursorKind.STRUCT_DECL:
+                                                            # return the name of the struct
+                                                            IoctlArg.append(struct.spelling)
+                                                            return IoctlArg
+
+    def check_switches(self, name, root=None, depth=0):
+        ''' Return (switch arg, (caselist, headerfile)
+            Assumption - all case macros are defined in same header file
+        '''
+
+        if root is None:
+            index = cindex.Index.create()
+            tu = index.parse(self.current_file)
+            root = tu.cursor
+
+        func_cursor = self.find_func_cursor(root, name)
+        if not func_cursor:
+            return None  # probably an inbuilt function being called. Skip
+        else:
+            func_cursor = func_cursor[-1]
+
+        func_args = [child.displayname for child in func_cursor.get_children() if
+                     child.kind == cindex.CursorKind.PARM_DECL]
+        switch_cases = self.find_switches(func_cursor, func_args)
+        if switch_cases is None and depth == 0:
+            # TO-DO : recursively find inside functions
+            switch_cases = self.recurse_functions(root, func_cursor, func_args)
+            return switch_cases
+        elif switch_cases is None and depth == 1:
+            return None
+
+        fp = open(self.current_file, 'r')
+        self.curr_lines = fp.readlines()
+
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        caselines = switch_cases[1]
+        cases = []
+        for linenum in caselines:
+            line = self.curr_lines[linenum - 1]
+            cobj = case_regex.match(line)
+            if cobj:
+                cases.append(cobj.group(1))
+            else:
+                sys.exit(-1)  # fatal error - no case match in case statement
+        header = self.find_macro_header(cases[0], caselines[0])
+        return (switch_cases[0], (cases, header))
+
+        '''
+        startline = int(func.get("start-line"))
+
+        possible_const = {}
+        switch_regex = re.compile(r"[\s\t]*switch[\s\t]*\((.*)\)")
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        funccall_regex = re.compile(r"[\s\t=]+([a-zA-Z0-9_]*)\((.*)\)")
+        # find in this function itself
+        cmd = ""
+        scope_count = 0
+        i = startline
+        func_scope = False
+        if '{' in self.curr_lines[i-1]:
+            func_scope = True
+
+        while(1):
+            curr_line = self.curr_lines[i]
+            if '{' in self.curr_lines[i] and func_scope == False:
+                func_scope = True
+            if '}' in self.curr_lines[i] and func_scope == True:
+                func_scope_count = False
+                break
+            mobj = switch_regex.findall(self.curr_lines[i])
+            if mobj and mobj[0] in [child.get("ident") for child in func]:
+                cases = []
+                if '{' in self.curr_lines[i]:
+                    scope_count += 1
+                i += 1
+                while(1):
+                    if '{' in self.curr_lines[i]:
+                        scope_count += 1
+                    if '}' in self.curr_lines[i]:
+                        scope_count -= 1
+                    if scope_count == 0:
+                        break
+                    cobj = case_regex.findall(self.curr_lines[i])
+                    if cobj:
+                        cases.append(cobj[0])
+
+                    i += 1
+                header = self.find_macro_header(cases[0], startline)
+                fp.close()
+                return (mobj[0], (cases,header))
+            if depth == 0:
+                fobj = funccall_regex.findall(self.curr_lines[i])
+                if fobj:
+                    args = [args.strip(" \t") for args in fobj[0][1].split(',')]
+                    name = fobj[0][0]
+                    next_func = None
+                    for element in self.current_root:
+                        if element.get("ident") == name:
+                            next_func = self.resolve_id(self.current_root, element.get("base-type"))
+                            break
+                    if next_func is not None:
+                        child_consts = self.check_switches(next_func, fp, 1)
+                        # check if any returned constants are func's arguments
+                        if child_consts is not None:
+                            for child in func:
+                                if child.get("ident") == child_consts[0]:
+                                    fp.close()
+                                    return child_consts
+
+            i += 1
+        fp.close()
+        return None
+        '''
+
+    def traverse_and_find_trap_case(self, IOCTL_NAME, IOCTL_CMD, tu, _file):
+        preOrderList = list(tu.cursor.walk_preorder())
+        IoctlArg = []
+        TargetCursorDecl = None
+        for c in tu.cursor.walk_preorder():
+            if c.location.file is None:
+                pass
+            elif c.location.file.name != _file:
+                pass
+            elif c.kind == cindex.CursorKind.CASE_STMT:
+                # print the case statement
+                # print the location of the case statement
+                foundIOCTLCase = False
+                for child in c.get_children():
+                    # print the case statement
+                    for token in child.get_tokens():
+                        # print("LINE: " + str(token.spelling) + " " + str(token.location.line))
+                        if IOCTL_NAME == str(token.spelling):
+                            self.logger.critical(
+                                "[*] Found IOCTL [" + IOCTL_CMD + "] case Handler: " + str(token.spelling))
+                            # iterate through extent until you find a call expression to a function
+                            foundIOCTLCase = True
+                        break
+                    if foundIOCTLCase:
+                        foundIOCTLCase = False
+                        tokens = tu.get_tokens(extent=c.extent)
+                        CalleeDeclRefs = []
+                        for token in tokens:
+                            if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
+                                    and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
+                                # fetch the function name
+                                FunctionName = str(token.spelling)
+                                if FunctionName == "copy_from_user" or FunctionName == "copy_to_user":
+                                    # we got it now
+                                    self.logger.critical("[*] Found IOCTL case KERNEL COPY STMT: " + str(FunctionName))
+                                    for functionArg_token in tu.get_tokens(extent=token.cursor.referenced.extent):
+                                        if functionArg_token.kind == cindex.TokenKind.IDENTIFIER \
+                                                and functionArg_token.cursor.kind == cindex.CursorKind.PARM_DECL:
+                                            print("Function arg is " + str(functionArg_token.spelling))
+                                else:
+                                    CalleeDeclRefs.append(token.cursor)
+                        # now we have all the decl refs that are function decls
+                        # lets iterate through them and fetch the function args
+                        if len(CalleeDeclRefs) == 1:
+                            TargetCursorDecl = self.findCursorToTargetFunction(IOCTL_CMD=IOCTL_CMD, tu=tu,
+                                                                               functionDeclRef=CalleeDeclRefs[0],
+                                                                               bfs=[])
+                        elif len(CalleeDeclRefs) > 1:
+                            TargetCursorDecl = self.findCursorToTargetFunction(IOCTL_CMD=IOCTL_CMD, tu=tu,
+                                                                               functionDeclRef=CalleeDeclRefs[0],
+                                                                               bfs=CalleeDeclRefs)
+
+        if TargetCursorDecl is None:
+            return ""
+        else:
+            return TargetCursorDecl
+
+    def findCursorToTargetFunction(self, IOCTL_CMD, tu, functionDeclRef, bfs=[], depth=0):
+        # if bfs is empty
+        if len(bfs) == 0:
+            # fetch function decl scope from the function decl ref
+            scope = functionDeclRef.referenced.extent
+            # fetch the tokens from the scope and append to bfs
+            FoundCallExpression = False
+            FoundCallArgBracket = False
+            FunctionName = ""
+            for token in tu.get_tokens(extent=scope):
+                # all function declrefs would be tokens of interests
+                # print token cursor kind
+                if FoundCallExpression == False:
+                    if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
+                            and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
+                        if token.spelling == "copy_from_user" or token.spelling == "copy_to_user":
+                            # we found it
+                            self.logger.critical(
+                                "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(token.spelling))
+                            FunctionName = token.spelling
+                            if FunctionName == "copy_from_user":
+                                Direction = "in"
+                            elif FunctionName == "copy_to_user":
+                                Direction = "out"
+                            FoundCallExpression = True
+                        else:
+                            bfs.append(token.cursor)
+                elif FoundCallArgBracket == False:
+                    if Direction == "in":
+                        if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == "(":  # first argument is the destination
+                            FoundCallArgBracket = True
+                    elif Direction == "out":
+                        if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == ",":  # second argument is the destination
+                            FoundCallArgBracket = True
+
+                elif FoundCallArgBracket == True:
+                    if token.kind == cindex.TokenKind.IDENTIFIER \
+                            and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR:
+
+                        ioctlArg = str(token.cursor.type.spelling)
+                        if "struct" in ioctlArg:
+                            ioctlArg = ioctlArg.split("struct")[1]
+                        elif "union" in ioctlArg:
+                            ioctlArg = ioctlArg.split("union")[1]
+                        else:
+                            #probably a typedef pointer
+                            ioctlArg = ioctlArg.split("*")[0]
+
+                        ioctlArg = ioctlArg.strip()
+                        self.logger.critical(
+                            "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
+                        return ioctlArg + " " + Direction
+
+            # if bfs vector is not empty
+            if len(bfs) > 0:
+                while len(bfs) > 0:
+                    # pop the first element
+                    currentCursorDeclRef = bfs.pop(0)
+                    currentCursor = currentCursorDeclRef.referenced
+                    scope = currentCursor.referenced.extent
+                    # fetch the tokens from the scope and append to bfs
+                    FoundCallExpression = False
+                    FoundCallArgBracket = False
+                    FunctionName = ""
+                    for token in tu.get_tokens(extent=scope):
+                        # all function declrefs would be tokens of interests
+                        # print token cursor kind
+                        if FoundCallExpression == False:
+                            if token.kind == cindex.TokenKind.IDENTIFIER \
+                                    and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
+                                    and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
+                                if token.spelling == "copy_from_user" or token.spelling == "copy_to_user":
+                                    # we found it
+                                    self.logger.critical(
+                                        "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(
+                                            token.spelling))
+                                    FunctionName = token.spelling
+                                    if FunctionName == "copy_from_user":
+                                        Direction = "in"
+                                    elif FunctionName == "copy_to_user":
+                                        Direction = "out"
+                                    FoundCallExpression = True
+                                else:
+                                    bfs.append(token.cursor)
+                        elif FoundCallArgBracket == False:
+                            if Direction == "in":
+                                if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == "(":  # first argument is the destination
+                                    FoundCallArgBracket = True
+                            elif Direction == "out":
+                                if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == ",":  # second argument is the destination
+                                    FoundCallArgBracket = True
+                        elif FoundCallArgBracket == True:
+                            if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR:
+                                ioctlArg = str(token.cursor.type.spelling)
+                                if "struct" in ioctlArg:
+                                    ioctlArg = ioctlArg.split("struct")[1]
+                                ioctlArg = ioctlArg.strip()
+                                self.logger.critical(
+                                    "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
+                                return ioctlArg + " " + Direction
+            else:
+                return None
+
+    def check_ioctl_switches(self, IOCTL_CMD, IOCTL_TRAP, file_):
+        ''' Return (ioctl Call Name, (argument direction, argument type))
+            Assumption - all case macros are defined in same header file
+        '''
+        index = cindex.Index.create()
+        tunit = index.parse(file_)
+        root = tunit.cursor
+
+        return self.traverse_and_find_trap_case(IOCTL_CMD=IOCTL_CMD, IOCTL_NAME=IOCTL_TRAP, tu=tunit, _file=file_)
 
     def syscall_run(self):
         """
