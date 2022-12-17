@@ -1163,14 +1163,15 @@ class Descriptions(object):
                 if FoundCallExpression == False:
                     if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
                             and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
-                        if token.spelling == "copy_from_user" or token.spelling == "copy_to_user":
+                        if token.spelling == "copy_from_user" or token.spelling == "copy_to_user" or\
+                            token.spelling == "put_user" or token.spelling == "get_user":
                             # we found it
                             self.logger.info(
                                 "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(token.spelling))
                             FunctionName = token.spelling
-                            if FunctionName == "copy_from_user":
+                            if FunctionName == "copy_from_user" or FunctionName == "get_user":
                                 Direction = "in"
-                            elif FunctionName == "copy_to_user":
+                            elif FunctionName == "copy_to_user"or FunctionName == "put_user":
                                 Direction = "out"
                             FoundCallExpression = True
                         else:
@@ -1188,15 +1189,16 @@ class Descriptions(object):
                             and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR:
 
                         ioctlArg = str(token.cursor.type.spelling)
-                        if "struct" in ioctlArg:
-                            ioctlArg = ioctlArg.split("struct")[1]
-                        elif "union" in ioctlArg:
-                            ioctlArg = ioctlArg.split("union")[1]
+                        ioctlArgList = ioctlArg.split(" ")
+                        if ioctlArgList[0] == "struct" or ioctlArgList[0] == "union":
+                            ioctlArg = ioctlArgList[1]
+                        elif ioctlArgList[0] == "unsigned":
+                            ioctlArg = ioctlArgList[1]
                         else:
-                            #probably a typedef pointer
-                            ioctlArg = ioctlArg.split("*")[0]
+                            ioctlArg = ioctlArgList[0].replace("*", "").replace("const", "").replace("volatile", "")
 
                         ioctlArg = ioctlArg.strip()
+
                         self.logger.info(
                             "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
                         return ioctlArg + " " + Direction
@@ -1219,15 +1221,16 @@ class Descriptions(object):
                             if token.kind == cindex.TokenKind.IDENTIFIER \
                                     and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
                                     and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
-                                if token.spelling == "copy_from_user" or token.spelling == "copy_to_user":
+                                if token.spelling == "copy_from_user" or token.spelling == "copy_to_user"\
+                                        or token.spelling == "put_user" or token.spelling == "get_user":
                                     # we found it
                                     self.logger.critical(
                                         "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(
                                             token.spelling))
                                     FunctionName = token.spelling
-                                    if FunctionName == "copy_from_user":
+                                    if FunctionName == "copy_from_user" or FunctionName == "get_user":
                                         Direction = "in"
-                                    elif FunctionName == "copy_to_user":
+                                    elif FunctionName == "copy_to_user" or FunctionName == "put_user":
                                         Direction = "out"
                                     FoundCallExpression = True
                                 else:

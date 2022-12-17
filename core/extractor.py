@@ -290,7 +290,6 @@ class Extractor(object):
                     # get the line as a string
                     line = line.strip()
                     trap_index = str(self.ioctl_trap_prefix)
-                    self.logger.critical("trap index is %s", trap_index)
                     # check if trap_index is a substring of line
                     if trap_index in line:
                         # fetch space separated words
@@ -302,7 +301,6 @@ class Extractor(object):
                                 ioctl_trap = word
                                 ioctl_trap = ioctl_trap
                         # print ioctl name and trap
-                        self.logger.critical("ioctl_trap %d for ioctl %s", ioctl_trap, words[1])
                         self.ioctls.append(
                         Ioctl(Ioctl.LNX, file, line.split()[1].strip(), None, self.sysobj, self.sysobj.target, ioctl_trap))
                     self.ioctls_headers.append(file)
