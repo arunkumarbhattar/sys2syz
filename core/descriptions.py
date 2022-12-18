@@ -9,22 +9,50 @@ import xml.etree.ElementTree as ET
 import re
 import os
 import string
+import clang.cindex as cindex
+import sys
  
 type_dict = {
-    "bool": "bool8",
-    "unsigned char": "int8",
-    "signed char": "int8",
-    "char": "int8",
-    "short": "int16",
-    "unsigned short": "int16",
-    "signed short": "int16",
-    "uint32_t": "int32",
-    "unsigned int": "int32",
-    "int": "int32",
-    "unsigned long": "intptr",
-    "long": "intptr",
-    "void": "void"
+'bool':'bool8',
+'char':'int8',
+'signed char':'int8',
+'unsigned char':'int8',
+'short':'int16',
+'short int':'int16',
+'signed short':'int16',
+'signed short int':'int16',
+'unsigned short':'int16',
+'unsigned short int':'int16',
+'int':'int32',
+'signed':'int32',
+'signed int':'int32',
+'unsigned':'int32',
+'unsigned int':'int32',
+'uint32_t':'int32',
+'long':'intptr',
+'long int':'intptr',
+'signed long':'intptr',
+'signed long int':'intptr',
+'unsigned long':'intptr',
+'unsigned long int':'intptr',
+'long long':'int64',
+'long long int':'int64',
+'signed long long':'int64',
+'signed long long int':'int64',
+'unsigned long long':'int64',
+'unsigned long long int':'int64',
+'void':'void',
+'__u64':'int64',
+'__u32':'int32',
 }
+# To add, if needed - 'float','double','long double'
+
+# basic_type_keywords = ['char','signed char','unsigned char','short','short int',
+# 'signed short','signed short int','unsigned short','unsigned short int','int',
+# 'signed','signed int','unsigned','unsigned int','long','long int','signed long',
+# 'signed long int','unsigned long','unsigned long int','long long','long long int',
+# 'signed long long','signed long long int','unsigned long long','unsigned long long int',
+# 'float','double','long double','const','struct','union']
 
 class Descriptions(object):
     def __init__(self, sysobj):
@@ -46,6 +74,8 @@ class Descriptions(object):
         if self.sysobj.input_type == "ioctl":
             self.ioctls = sysobj.ioctls
             self.flag_descriptions = sysobj.macro_details
+        else:
+            self.func_consts = {}
 
     def get_root(self, ident_name):
         """
@@ -73,9 +103,11 @@ class Descriptions(object):
         """
 
         try:
-            for element in root:
+            for element in root:    # try only first level nodes, most of them are found here
                 if element.get("id") == find_id:
                     return element
+
+            for element in root:    # try deeper nodes
                 for child in element:
                     if child.get("id") == find_id:
                         return child
@@ -320,7 +352,7 @@ class Descriptions(object):
         try:
             self.logger.debug("[*] Building pointer")
             if self.sysobj.input_type == "syscall":
-                self.ptr_dir = input("Enter pointer direction: ")
+                self.ptr_dir = "inout"# input("Enter pointer direction: ")
             #pointer is a builtin type
             if "base-type-builtin" in child.attrib.keys():
                 base_type = child.get("base-type-builtin")
@@ -371,7 +403,7 @@ class Descriptions(object):
         self.functions[func_name] = [func_args, func_ret]
         return func_name
 
-    def build_struct(self, child, default_name="Deafult"):
+    def build_struct(self, child, default_name="Default"):
         """
         Build struct
         :return: Struct identifier
@@ -384,23 +416,99 @@ class Descriptions(object):
             if name is None:
                 name = default_name
             if name not in self.structs_defs.keys():
+                pad_count = 0
                 self.logger.debug("[*] Building struct: " + name)
                 self.structs_defs[name] = []
                 elements = {}
                 prev_elem_name = "nill"
                 strct_strt = int(child.get("start-line"))
+                if child.get("end-line") is not None:
+                    strct_end = int(child.get("end-line"))
+                    end_line = strct_strt
+                    prev_elem_type = "None"
+                    #get the type of each element in struct
+                    for element in child:
+                        curr_name = element.get("ident")
+                        if curr_name is None:
+                            curr_name = "__pad__"+str(pad_count)
+                            pad_count += 1
+                        self.logger.debug("- Generating desciption for "+ curr_name)
+                        elem_type = self.get_type(element, curr_name)
+                        start_line = int(element.get("start-line"))
+                        #check for flags defined in struct's scope,
+                        #possibility of flags only when prev_elem_type has 'int' keyword 
+                        if ((start_line - end_line) > 1) and ("int" in prev_elem_type):
+                            enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
+                            if enum_name is None:
+                                self.logger.debug("- Generating desciption for "+ curr_name)
+                                elem_type = self.get_type(element, curr_name)                        
+                            else:
+                                elements[prev_elem_name]= enum_name
+                        end_line = int(element.get("end-line"))
+                        elements[curr_name] = str(elem_type)
+                        prev_elem_name = curr_name
+                        prev_elem_type = elem_type
+
+                    if (strct_end - start_line) > 1:
+                        enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
+                        if enum_name is None:
+                            self.logger.debug("- Generating desciption for "+ curr_name)
+                            elem_type = self.get_type(element, curr_name)                        
+                        else:
+                            elements[prev_elem_name]= enum_name
+                    #check for the elements which store length of an array or buffer
+                    for element in elements:
+                        len_grp = len_regx.match(element)
+                        if len_grp is not None:
+                            buf_name = len_grp.groups()[0]
+                            matches = [search_str for search_str in elements if re.search(buf_name, search_str)] 
+                            for i in matches:
+                                if i is not element:
+                                    if elements[element] in type_dict.values():
+                                        elem_type = "len[" + i + ", " + elements[element] + "]"
+                                    elif "flags" in elements[element]:
+                                        basic_type = elements[element].split(",")[-1][:-1].strip()
+                                        elem_type = "len[" + i + ", " + basic_type + "]"
+                                    else:
+                                        self.logger.warning("[*] Len type unhandled")
+                                        elem_type = "None"
+                                    elements[element] = elem_type
+                else:
+                    elements["dummyvoid"] = 'void'
+                self.structs_defs[name] = [child, elements]
+            return str(name)
+        except Exception as e:
+            self.logger.error(e)
+            self.logger.warning("[!] Error occured while resolving the struct: " + name)
+
+    def build_union(self, child, default_name="Default"):
+        """
+        Build union
+        :return: Union identifier
+        """        
+        #regex to check if name of element contains 'len' keyword
+        
+        len_regx = re.compile("(.+)len")
+        name = child.get("ident")
+        if name is None:
+                name = default_name
+        if name not in self.union_defs.keys():
+            self.logger.debug("[*] Building union: " + name)
+            elements = {}
+            prev_elem_name = "nill"
+            strct_strt = int(child.get("start-line"))
+            if child.get("end-line") is not None:
                 strct_end = int(child.get("end-line"))
                 end_line = strct_strt
                 prev_elem_type = "None"
-                #get the type of each element in struct
+                #get the type of each element in union
                 for element in child:
                     curr_name = element.get("ident")
                     self.logger.debug("- Generating desciption for "+ curr_name)
                     elem_type = self.get_type(element, curr_name)
                     start_line = int(element.get("start-line"))
-                    #check for flags defined in struct's scope,
-                    #possibility of flags only when prev_elem_type has 'int' keyword 
-                    if ((start_line - end_line) > 1) and ("int" in prev_elem_type):
+                    #check for flags defined in union's scope
+                    if ((start_line - end_line) > 1) and ("int" in prev_elem_type):                       
                         enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
                         if enum_name is None:
                             self.logger.debug("- Generating desciption for "+ curr_name)
@@ -436,85 +544,38 @@ class Descriptions(object):
                                     self.logger.warning("[*] Len type unhandled")
                                     elem_type = "None"
                                 elements[element] = elem_type
-                self.structs_defs[name] = [child, elements]
-            return str(name)
-        except Exception as e:
-            self.logger.error(e)
-            self.logger.warning("[!] Error occured while resolving the struct: " + name)
-
-    def build_union(self, child, default_name="Default"):
-        """
-        Build union
-        :return: Union identifier
-        """        
-        #regex to check if name of element contains 'len' keyword
-        
-        len_regx = re.compile("(.+)len")
-        name = child.get("ident")
-        if name is None:
-                name = default_name
-        if name not in self.union_defs.keys():
-            self.logger.debug("[*] Building union: " + name)
-            elements = {}
-            prev_elem_name = "nill"
-            strct_strt = int(child.get("start-line"))
-            strct_end = int(child.get("end-line"))
-            end_line = strct_strt
-            prev_elem_type = "None"
-            #get the type of each element in union
-            for element in child:
-                curr_name = element.get("ident")
-                self.logger.debug("- Generating desciption for "+ curr_name)
-                elem_type = self.get_type(element, curr_name)
-                start_line = int(element.get("start-line"))
-                #check for flags defined in union's scope
-                if ((start_line - end_line) > 1) and ("int" in prev_elem_type):                       
-                    enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
-                    if enum_name is None:
-                        self.logger.debug("- Generating desciption for "+ curr_name)
-                        elem_type = self.get_type(element, curr_name)                        
-                    else:
-                        elements[prev_elem_name]= enum_name
-                end_line = int(element.get("end-line"))
-                elements[curr_name] = str(elem_type)
-                prev_elem_name = curr_name
-                prev_elem_type = elem_type
-
-            if (strct_end - start_line) > 1:
-                enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
-                if enum_name is None:
-                    self.logger.debug("- Generating desciption for "+ curr_name)
-                    elem_type = self.get_type(element, curr_name)                        
-                else:
-                    elements[prev_elem_name]= enum_name
-            #check for the elements which store length of an array or buffer
-            for element in elements:
-                len_grp = len_regx.match(element)
-                if len_grp is not None:
-                    buf_name = len_grp.groups()[0]
-                    matches = [search_str for search_str in elements if re.search(buf_name, search_str)] 
-                    for i in matches:
-                        if i is not element:
-                            if elements[element] in type_dict.values():
-                                elem_type = "len[" + i + ", " + elements[element] + "]"
-                            elif "flags" in elements[element]:
-                                basic_type = elements[element].split(",")[-1][:-1].strip()
-                                elem_type = "len[" + i + ", " + basic_type + "]"
-                            else:
-                                self.logger.warning("[*] Len type unhandled")
-                                elem_type = "None"
-                            elements[element] = elem_type
+            else:
+                elements["dummyvoid"] = 'void'
             self.union_defs[name] = [child, elements]
         return str(name)
+
+    def checkname(self, name):
+        return "res" if name == "resource" else name
+
+    def checkdesc(self, desc, name, const_var, func):
+        if name == const_var:
+            return 'flags['+func+'_'+name+'_flag]'
+        else:
+            return desc if desc is not None else 'void'
+
 
     def pretty_func(self):
         func_str = ""
         for func in self.functions.keys():
-            func_str += func + "("
-            func_str += ", ".join([name + " " + desc for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
-            if self.functions[func][1] is not None:
-                func_str += self.functions[func][0]
-            func_str+="\n"
+            if func in self.func_consts:
+                const_var = self.func_consts[func][0]
+                func_str += func + "("
+                func_str += ", ".join([self.checkname(name) + " " + self.checkdesc(desc,name,const_var,func) for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+                self.gflags[func+'_'+const_var+'_flag'] = self.func_consts[func][1]
+                if self.functions[func][1] is not None:
+                    func_str += self.functions[func][0]
+                func_str+="\n"
+            else:
+                func_str += func + "("
+                func_str += ", ".join([self.checkname(name) + " " + desc for name, desc in zip(self.functions[func][0].keys(), self.functions[func][0].values())]) + ") "
+                if self.functions[func][1] is not None:
+                    func_str += self.functions[func][0]
+                func_str+="\n"
         return func_str
 
     def pretty_structs_unions(self):
@@ -531,7 +592,10 @@ class Descriptions(object):
             node = self.structs_defs[key][0]
             element_names = self.structs_defs[key][1].keys()                
             strct_strt = int(node.get("start-line"))
-            strct_end = int(node.get("end-line"))
+            if node.get("end-line") is None:
+                strct_end = strct_strt
+            else:
+                strct_end = int(node.get("end-line"))
             #get flags in vicinity of structs for ioctls
             if self.sysobj.input_type == "ioctl":
                 self.find_flags(key, element_names, strct_strt, strct_end)
@@ -546,7 +610,10 @@ class Descriptions(object):
             node = self.union_defs[key][0]
             element_names = self.union_defs[key][1].keys()                
             union_strt = int(node.get("start-line"))
-            union_end = int(node.get("end-line"))
+            if node.get("end-line") is None:
+                union_end = union_strt
+            else:
+                union_end = int(node.get("end-line"))
             #get flags in vicinity of unions for ioctls
             if self.sysobj.input_type == "ioctl":
                 self.find_flags(key, element_names, union_strt, union_end)
@@ -586,6 +653,24 @@ class Descriptions(object):
         except Exception as e:
             self.logger.error(e)
             self.logger.warning("[!] Error in parsing ioctl command descriptions")
+
+    def pretty_syscall(self):
+        func_str = self.pretty_func()
+        struct_union_str = self.pretty_structs_unions()
+        flag_str = ""
+        includes = ""
+        for flg_name in self.gflags:
+            if len(self.gflags[flg_name]) == 1: # debug this corner case. Why no header?
+                flag_str += flg_name + " = " + ','.join(self.gflags[flg_name]) + "\n"
+            else:
+                flag_str += flg_name + " = " + ','.join(self.gflags[flg_name][0]) + "\n"
+                if self.gflags[flg_name][1] != "":
+                    includes += '#include <' + self.gflags[flg_name][1] + '>\n'
+        output_file_path = os.path.join(os.getcwd(),"out", self.sysobj.os, "syscalls.txt")
+        output_file = open( output_file_path, "w")
+        output_file.write("\n".join([includes, func_str, struct_union_str, flag_str]))
+        output_file.close()
+        return output_file_path
 
     def make_file(self):
         """
@@ -671,41 +756,234 @@ class Descriptions(object):
                 self.arguments[cmd] = None
         return True
 
+    def find_macro_header(self, macro, linenum):
+        include_regex = re.compile(r"#[0-9\s]*\"(.*).h\"")
+        # find macro first
+        i = linenum
+        for i in range(linenum, -1, -1):
+            if '#define '+macro in self.curr_lines[i]:
+                break
+        if i == linenum:
+            sys.exit(-1)    # fatal error - #define macro not found in .i file
+        
+        for j in range(i,-1,-1):
+            robj = include_regex.match(self.curr_lines[j])
+            if robj:
+                return robj.group(1).strip("./") + '.h'
+        return ""
+
+    def find_func_cursor(self, root, name):
+        ret = []
+        if root.kind == cindex.CursorKind.FUNCTION_DECL and root.spelling == name:
+            return root
+        else:
+            for child in root.get_children():
+                if child.kind == cindex.CursorKind.FUNCTION_DECL and child.spelling == name:
+                    ret.append(child)
+                '''
+                ASSUMPTION! - All function definitions are immediate children of root
+                If false, uncomment below code
+                '''
+                # found = find_func_cursor(child, name)
+                # if found is not None:
+                # 	ret.append(found)
+            # if len(ret) == 0 :
+            # 	return None
+            # else:
+            # 	return ret
+        return ret
+
+    def get_cases(self, switchnode):
+        caselines = []
+        for child in switchnode.get_children():
+            if child.kind == cindex.CursorKind.COMPOUND_STMT:
+                for cases in child.get_children():
+                    if cases.kind == cindex.CursorKind.CASE_STMT:
+                        caselines.append(cases.location.line)
+                break
+        return caselines
+
+    def find_switches(self, node, args):
+        ''' Return (switch arg, case linenums)'''
+        if node.kind == cindex.CursorKind.SWITCH_STMT:  # check if its switching based on arguments
+            found = 0
+            for child in node.get_children():
+                if child.displayname in args:
+                    found = 1
+                    break
+            if found == 0:
+                return None
+            else:
+                return (child.displayname, self.get_cases(node))
+        else:
+            for child in node.get_children():
+                ret = self.find_switches(child, args)
+                if ret is not None:
+                    return ret
+        return None
+
+    def recurse_functions(self, root, func, args):
+        for child in func.get_children():
+            if child.kind == cindex.CursorKind.CALL_EXPR:
+                ret = self.check_switches(child.spelling, root, 1)
+                if ret is not None and ret[0] in args:
+                    return ret
+            else:
+                ret = self.recurse_functions(root, child, args)
+                if ret is not None:
+                    return ret
+        return None                
+
+    def check_switches(self, name, root=None, depth=0):
+        ''' Return (switch arg, (caselist, headerfile) 
+            Assumption - all case macros are defined in same header file
+        '''
+
+        if root is None:
+            index = cindex.Index.create()
+            tu = index.parse(self.current_file)
+            root = tu.cursor
+        
+        func_cursor = self.find_func_cursor(root, name)
+        if not func_cursor:
+            return None # probably an inbuilt function being called. Skip
+        else:
+            func_cursor = func_cursor[-1]
+
+        func_args = [child.displayname for child in func_cursor.get_children() if child.kind == cindex.CursorKind.PARM_DECL]
+        switch_cases = self.find_switches(func_cursor, func_args)
+        if switch_cases is None and depth == 0:
+            # TO-DO : recursively find inside functions
+            switch_cases = self.recurse_functions(root, func_cursor, func_args)
+            return switch_cases
+        elif switch_cases is None and depth == 1:
+            return None
+        
+        fp = open(self.current_file,'r')
+        self.curr_lines = fp.readlines()
+        
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        caselines = switch_cases[1]
+        cases = []
+        for linenum in caselines:
+            line = self.curr_lines[linenum-1]
+            cobj = case_regex.match(line)
+            if cobj:
+                cases.append(cobj.group(1))
+            else:
+                sys.exit(-1)    # fatal error - no case match in case statement
+        header = self.find_macro_header(cases[0], caselines[0])
+        return (switch_cases[0], (cases, header))
+
+        '''
+        startline = int(func.get("start-line"))
+        
+        possible_const = {}
+
+        switch_regex = re.compile(r"[\s\t]*switch[\s\t]*\((.*)\)")
+        case_regex = re.compile(r"[\s\t]*case[\s\t]*(.*):")
+        funccall_regex = re.compile(r"[\s\t=]+([a-zA-Z0-9_]*)\((.*)\)")
+        # find in this function itself
+        cmd = ""
+        scope_count = 0
+        i = startline
+        func_scope = False
+        if '{' in self.curr_lines[i-1]:
+            func_scope = True
+            
+        while(1):
+            curr_line = self.curr_lines[i]
+            if '{' in self.curr_lines[i] and func_scope == False:
+                func_scope = True
+            if '}' in self.curr_lines[i] and func_scope == True:
+                func_scope_count = False
+                break
+            mobj = switch_regex.findall(self.curr_lines[i])
+            if mobj and mobj[0] in [child.get("ident") for child in func]:
+                cases = []
+                if '{' in self.curr_lines[i]:
+                    scope_count += 1
+                i += 1
+                while(1):
+                    if '{' in self.curr_lines[i]:
+                        scope_count += 1
+                    if '}' in self.curr_lines[i]:
+                        scope_count -= 1
+                    if scope_count == 0:
+                        break
+                    cobj = case_regex.findall(self.curr_lines[i])
+                    if cobj:
+                        cases.append(cobj[0])
+                    
+                    i += 1
+                header = self.find_macro_header(cases[0], startline)
+                fp.close()
+                return (mobj[0], (cases,header))
+
+            if depth == 0:
+                fobj = funccall_regex.findall(self.curr_lines[i])
+                if fobj:
+                    args = [args.strip(" \t") for args in fobj[0][1].split(',')]
+                    name = fobj[0][0]
+                    next_func = None
+                    for element in self.current_root:
+                        if element.get("ident") == name:
+                            next_func = self.resolve_id(self.current_root, element.get("base-type"))
+                            break
+                    if next_func is not None:
+                        child_consts = self.check_switches(next_func, fp, 1)
+                        # check if any returned constants are func's arguments
+                        if child_consts is not None:
+                            for child in func:
+                                if child.get("ident") == child_consts[0]:
+                                    fp.close()
+                                    return child_consts
+            
+            i += 1
+
+        fp.close()
+        return None
+        '''
+
     def syscall_run(self):
         """
         Parses arguments and structures for ioctl calls
         :return: True
         """
-        syscall_args = {}
         self.xml_dir = self.sysobj.out_dir
-        for xml_file in (os.listdir(self.xml_dir)):
+        self.defines_dict = self.sysobj.defines_dict
+
+        for syscall in self.defines_dict.keys():
+            syscall_args = {}
+            target_file = self.defines_dict[syscall][0].split('/')[-1].split('.')[0]
+            xml_file = os.path.join(self.xml_dir, target_file+'.xml')
             tree = ET.parse(join(self.xml_dir, xml_file))
-            self.trees[tree] = xml_file
-        args_name = self.target + "_args"
-        syscall_root = self.get_root(args_name)
-        for element in syscall_root:
-                #if element is found in the tree call get_type 
-                #function, to find the type of argument for descriptions
-            if element.get("ident") == args_name:
-                for child in element:
-                    self.logger.debug("- Function argument: " + child.get('ident'))
-                    syscall_args[child.get('ident')]=self.get_syscall_arg(child.get('base-type'))
-                break
-        self.functions[self.target] = [syscall_args, None]
-        flag_str = ""
-        for flg_name in self.gflags:
-                flag_str += flg_name + " = " + self.gflags[flg_name] + "\n"
-        func_str = self.pretty_func()
-        struct_union_str = self.pretty_structs_unions()
-        print("--------------Description--------------\n")
-        print("\n".join([func_str, struct_union_str, flag_str]))
+            self.current_root = tree.getroot()
+            self.current_file = os.path.dirname(self.xml_dir) + '/' + target_file + '.i'
+            # self.current_fp = open(self.current_file,'r')
 
-    def get_syscall_arg(self, base_id):
-        for element in self.resolve_id(self.current_root, base_id):
-            if element.get('ident') == "le":
-                element_base = self.resolve_id(self.current_root, element.get('base-type'))
-                for child in element_base:
-                    return self.get_type(child)
+            # Replace #defines in function signature
+            # args = self.replace_macros(self.defines_dict[syscall][1])
+            # self.current_fp.close()
 
-        
-         
+            self.logger.debug("[+] Building function : " + syscall)
+            # args_name = self.target + "_args"
+            # syscall_root = self.get_root(args_name)
+            for element in self.current_root:
+                    #if element is found in the tree call get_type 
+                    #function, to find the type of argument for descriptions
+                if element.get("ident") == '__do_sys_'+syscall and element.get("type") == "node":
+                    args_present = False
+                    for child in self.resolve_id(self.current_root, element.get('base-type')):
+                        if(child.get('ident') == "__unused"):   # special case, no real arguments
+                            continue
+                        self.logger.debug("- Function argument: " + child.get('ident'))
+                        syscall_args[child.get('ident')] = self.get_type(child) # self.get_syscall_arg(child)
+                        args_present = True
+                    if args_present:
+                        possible_const = self.check_switches(element.get("ident"), None, 0)
+                        if possible_const is not None:
+                            self.func_consts[syscall] = possible_const
+                    break
+            self.functions[syscall] = [syscall_args, None]
+        return True

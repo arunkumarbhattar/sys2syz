@@ -1,0 +1,24 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/sys2syz.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-i","syscall",
+                "-t","/home/trivi/HSS/linux/arch/x86/entry",
+                "-s","syscalls/syscall_64.tbl",
+                "-g","/home/trivi/HSS/linux/tags",
+                "-c","/home/trivi/HSS/linux/compile.json",
+                "-vv",
+                "-o","linux"
+            ]
+        }
+    ]
+}

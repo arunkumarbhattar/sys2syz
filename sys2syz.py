@@ -43,7 +43,9 @@ class Sys2syz(object):
 
         if input_type == "syscall":
             self.target = target
-            self.out_dir = os.path.join(os.getcwd(), "out/", self.os, "preprocessed/", basename(self.target), "out")
+            self.out_dir = os.path.join(os.getcwd(), "out/", self.os, "preprocessed/", "syscalls", "out")
+            self.syscalls = []
+            self.defines_dict = {}
             self.bear = Bear(self)
             self.c2xml = C2xml(self)
             self.syscall = Syscall(self)
@@ -65,10 +67,10 @@ class Sys2syz(object):
                 return False
             logging.debug("[+] The target file is %s", self.target)
 
-        if not os.path.isfile(self.compile_commands):
-            logging.error("[+] The compile commands not found at %s", self.compile_commands)
-            return False
-        logging.debug("[+] The compile commands file is %s", self.compile_commands)
+        # if not os.path.isfile(self.compile_commands):
+        #     logging.error("[+] The compile commands not found at %s", self.compile_commands)
+        #     return False
+        # logging.debug("[+] The compile commands file is %s", self.compile_commands)
 
         for os_type in self.supported_os.keys():
             if os_type.lower() == self.os.lower():
@@ -109,11 +111,11 @@ class Sys2syz(object):
         self.macro_details = self.extractor.flag_details(self.undefined_macros)
         logging.info(f"[+] Extracted details of {len(self.macro_details)} macros from c2xml!")
 
-    def preprocess_files(self, file_name=None) -> bool:
+    def preprocess_files(self) -> bool:
         """ Preprocess the files
         """
         try:
-            if self.bear.parse_compile_commands(file_name):
+            if self.bear.parse_compile_commands():
                 return True
         except Exception as e:
             logging.critical("Unable to run bear and parse compile commands")
@@ -140,11 +142,24 @@ class Sys2syz(object):
         
         if self.input_type == "syscall":
             self.descriptions.syscall_run()
+            output_path = self.descriptions.pretty_syscall()
+            if Utils.file_exists(output_path, True):
+                logging.info("[+] Description file: " + output_path)
+                return True
+            return False
         
         return True
         '''except Exception as e:
             logging.critical("Unable to generate descriptions for ioctl calls")
         return False'''
+
+    def get_syscalls(self, syscall_tbl) -> bool:
+        self.syscall.find_syscalls(os.path.join(self.target, syscall_tbl))
+
+        if len(self.syscall.syscalls) == 0:
+            return False
+        logging.info(f"[+] {len(self.syscall.syscalls)} SysCalls were found!")
+        return True
         
 def main():
     global logging
@@ -152,7 +167,9 @@ def main():
     parser = argparse.ArgumentParser(description="Sys2Syz : A Utility to convert Syscalls and Ioctls to Syzkaller representation")
     
     parser.add_argument("-i", "--input_type", help="input type ioctl/syscall", type=str, required=True)
-    parser.add_argument("-t", "--target", help="target device directory/ syscall name", type=str, required=True)
+    parser.add_argument("-t", "--target", help="target device directory / syscall directory", type=str, required=True)
+    parser.add_argument("-s", "--systbl", help="syscall table file", type=str, required=False)
+    parser.add_argument("-g", "--ctagfile", help="path to CTags file", type=str, required=False)
     parser.add_argument("-o", "--operating-system", help="target operating system", type=str, required=True)
     parser.add_argument("-c", "--compile-commands", help="path to compile_commands.json", type=str, required=True)
     parser.add_argument("-v", "--verbosity", help="sys2syz log level", action="count")
@@ -201,9 +218,17 @@ def main():
 
     if sysobj.input_type == "syscall":
 
-        file_name = sysobj.syscall.find_file()
+        if not sysobj.get_syscalls(args.systbl):
+            logging.error("No syscalls found - check syscall.tbl file! Exiting...")
+            sys.exit(-1)
+        sysobj.syscalls = sysobj.syscall.syscalls
 
-        if not sysobj.preprocess_files(file_name):
+        if not sysobj.syscall.find_files(args.ctagfile):
+            logging.error("CTag File processing error! Exiting...")
+            sys.exit(-1)
+        sysobj.defines_dict = sysobj.syscall.defines_dict
+        
+        if not sysobj.preprocess_files():
             logging.error("Can't continue.. Exiting")
             sys.exit(-1)
         
