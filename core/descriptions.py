@@ -1205,9 +1205,16 @@ class Descriptions(object):
                                     FoundCallArgBracket = True
                         elif FoundCallArgBracket == True:
                             if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR:
+                                # we found the argument
                                 ioctlArg = str(token.cursor.type.spelling)
-                                if "struct" in ioctlArg:
-                                    ioctlArg = ioctlArg.split("struct")[1]
+                                ioctlArgList = ioctlArg.split(" ")
+                                if ioctlArgList[0] == "struct" or ioctlArgList[0] == "union":
+                                    ioctlArg = ioctlArgList[1]
+                                elif ioctlArgList[0] == "unsigned":
+                                    ioctlArg = ioctlArgList[1]
+                                else:
+                                    ioctlArg = ioctlArgList[0].replace("*", "").replace("const", "").replace("volatile",
+                                                                                                             "")
                                 ioctlArg = ioctlArg.strip()
                                 self.logger.critical(
                                     "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
