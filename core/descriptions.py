@@ -445,13 +445,11 @@ class Descriptions(object):
     def checkname(name):
         return "res" if name == "resource" else name
 
-    def build_struct(self, child, default_name="Deafult"):
+    def build_struct(self, child, default_name="Default"):
         """
         Build struct
         :return: Struct identifier
         """
-
-        global start_line
         try:
             # regex to check if name of element contains 'len' keyword
             len_regx = re.compile("(.+)len")
@@ -464,78 +462,62 @@ class Descriptions(object):
                 self.structs_defs[name] = []
                 elements = {}
                 prev_elem_name = "nill"
-                if child.get("start-line") is None:
-                    self.logger.warning("[!] This Struct has NO Definition: " + name)
-                    return
                 strct_strt = int(child.get("start-line"))
-                if child.get("end-line") is None:
-                    self.logger.warning("[!] This Struct has NO Definition: " + name)
-                    return
-                strct_end = int(child.get("end-line"))
-                end_line = strct_strt
-                prev_elem_type = "None"
-                # get the type of each element in struct
-                for element in child:
-                    curr_name = element.get("ident")
-                    if curr_name is None:
-                        curr_name = "default_name"
-                        print("Name resolution failed for union element" + str(element))
-                        elem_type = "int64"
-                    else:
-                        self.logger.warning("- Generating description for " + curr_name)
+                if child.get("end-line") is not None:
+                    strct_end = int(child.get("end-line"))
+                    end_line = strct_strt
+                    prev_elem_type = "None"
+                    # get the type of each element in struct
+                    for element in child:
+                        curr_name = element.get("ident")
+                        if curr_name is None:
+                            curr_name = "__pad__" + str(pad_count)
+                            pad_count += 1
+                        self.logger.debug("- Generating desciption for " + curr_name)
                         elem_type = self.get_type(element, curr_name)
-                    print("RECEIVED ELEMENT TYPE: " + str(elem_type) + " FOR ELEMENT: " + str(curr_name))
-                    if element.get("start-line") is None:
-                        # set element to be builtin base type
-                        self.logger.warning("[!] This Struct has NO Definition: " + curr_name)
-                        elem_type = type_dict[element.get("base-type-builtin")]
-                        start_line = end_line
-                    else:
                         start_line = int(element.get("start-line"))
                         # check for flags defined in struct's scope,
                         # possibility of flags only when prev_elem_type has 'int' keyword
-                        if ((start_line - end_line) > 1) and ("int" in str(prev_elem_type)):
+                        if ((start_line - end_line) > 1) and ("int" in prev_elem_type):
                             enum_name = self.instruct_flags(name, prev_elem_name, end_line, start_line, prev_elem_type)
                             if enum_name is None:
-                                self.logger.debug("- Generating description for " + curr_name)
+                                self.logger.debug("- Generating desciption for " + curr_name)
                                 elem_type = self.get_type(element, curr_name)
                             else:
                                 elements[prev_elem_name] = enum_name
                         end_line = int(element.get("end-line"))
-                    if str(elem_type) == "None":
-                        elem_type = "int64"
-                    elements[curr_name] = str(elem_type)
-                    prev_elem_name = curr_name
-                    prev_elem_type = elem_type
+                        elements[curr_name] = str(elem_type)
+                        prev_elem_name = curr_name
+                        prev_elem_type = elem_type
 
-                if (strct_end - start_line) > 1:
-                    enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
-                    if enum_name is None:
-                        self.logger.debug("- Generating description for " + curr_name)
-                        elem_type = self.get_type(element, curr_name)
-                    else:
-                        elements[prev_elem_name] = enum_name
-                # check for the elements which store length of an array or buffer
-                for element in elements:
-                    len_grp = len_regx.match(element)
-                    if len_grp is not None:
-                        buf_name = len_grp.groups()[0]
-                        matches = [search_str for search_str in elements if re.search(buf_name, search_str)]
-                        for i in matches:
-                            if i is not element:
-                                if elements[element] in type_dict.values():
-                                    elem_type = "len[" + i + ", " + elements[element] + "]"
-                                elif "flags" in elements[element]:
-                                    basic_type = elements[element].split(",")[-1][:-1].strip()
-                                    elem_type = "len[" + i + ", " + basic_type + "]"
-                                else:
-                                    self.logger.warning("[*] Len type unhandled")
-                                    elem_type = "long"
-                                elements[element] = elem_type
-            else:
-                elements["dummyvoid"] = 'void'
-            self.structs_defs[name] = [child, elements]
-        return str(name)
+                    if (strct_end - start_line) > 1:
+                        enum_name = self.instruct_flags(name, prev_elem_name, start_line, strct_end, elem_type)
+                        if enum_name is None:
+                            self.logger.debug("- Generating desciption for " + curr_name)
+                            elem_type = self.get_type(element, curr_name)
+                        else:
+                            elements[prev_elem_name] = enum_name
+                    # check for the elements which store length of an array or buffer
+                    for element in elements:
+                        len_grp = len_regx.match(element)
+                        if len_grp is not None:
+                            buf_name = len_grp.groups()[0]
+                            matches = [search_str for search_str in elements if re.search(buf_name, search_str)]
+                            for i in matches:
+                                if i is not element:
+                                    if elements[element] in type_dict.values():
+                                        elem_type = "len[" + i + ", " + elements[element] + "]"
+                                    elif "flags" in elements[element]:
+                                        basic_type = elements[element].split(",")[-1][:-1].strip()
+                                        elem_type = "len[" + i + ", " + basic_type + "]"
+                                    else:
+                                        self.logger.warning("[*] Len type unhandled")
+                                        elem_type = "None"
+                                    elements[element] = elem_type
+                else:
+                    elements["dummyvoid"] = 'void'
+                self.structs_defs[name] = [child, elements]
+            return str(name)
         except Exception as e:
             self.logger.error(e)
             exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -843,7 +825,8 @@ class Descriptions(object):
         for root, dirs, files in os.walk(PreprocessedFileDir):
             # fetch all the files ending with .i
             for file in files:
-                if file.endswith(".i") and not file.startswith("."):
+                if file.endswith(".i") and not file.startswith(".") \
+                        and self.isFileAGoodCandidate(file.replace(".i", ".c")):
                     preprocessedFiles.append(file)
         IoctlDefinitions = None
         # iterate over all the files
@@ -1160,24 +1143,20 @@ class Descriptions(object):
                                     and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
                                 # fetch the function name
                                 FunctionName = str(token.spelling)
-                                if FunctionName == "copy_from_user" or FunctionName == "copy_to_user":
+                                if FunctionName == "copy_from_user" or FunctionName == "copy_to_user" or\
+                                    FunctionName == "get_user" or FunctionName == "put_user":
                                     # we got it now
                                     self.logger.info("[*] Found IOCTL case KERNEL COPY STMT: " + str(FunctionName))
                                     for functionArg_token in tu.get_tokens(extent=token.cursor.referenced.extent):
                                         if functionArg_token.kind == cindex.TokenKind.IDENTIFIER \
                                                 and functionArg_token.cursor.kind == cindex.CursorKind.PARM_DECL:
                                             print("Function arg is " + str(functionArg_token.spelling))
-                                else:
-                                    CalleeDeclRefs.append(token.cursor)
+
+                                CalleeDeclRefs.append(token.cursor)
+
                         # now we have all the decl refs that are function decls
                         # lets iterate through them and fetch the function args
-                        if len(CalleeDeclRefs) == 1:
-                            TargetCursorDecl = self.findCursorToTargetFunction(IOCTL_CMD=IOCTL_CMD, tu=tu,
-                                                                               functionDeclRef=CalleeDeclRefs[0],
-                                                                               bfs=[])
-                        elif len(CalleeDeclRefs) > 1:
-                            TargetCursorDecl = self.findCursorToTargetFunction(IOCTL_CMD=IOCTL_CMD, tu=tu,
-                                                                               functionDeclRef=CalleeDeclRefs[0],
+                        TargetCursorDecl = self.findCursorToTargetFunction(IOCTL_CMD=IOCTL_CMD, tu=tu,
                                                                                bfs=CalleeDeclRefs)
 
         if TargetCursorDecl is None:
@@ -1185,61 +1164,7 @@ class Descriptions(object):
         else:
             return TargetCursorDecl
 
-    def findCursorToTargetFunction(self, IOCTL_CMD, tu, functionDeclRef, bfs=[], depth=0):
-        # if bfs is empty
-        if len(bfs) == 0:
-            # fetch function decl scope from the function decl ref
-            scope = functionDeclRef.referenced.extent
-            # fetch the tokens from the scope and append to bfs
-            FoundCallExpression = False
-            FoundCallArgBracket = False
-            FunctionName = ""
-            for token in tu.get_tokens(extent=scope):
-                # all function declrefs would be tokens of interests
-                # print token cursor kind
-                if FoundCallExpression == False:
-                    if token.kind == cindex.TokenKind.IDENTIFIER and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR \
-                            and token.cursor.referenced.kind == cindex.CursorKind.FUNCTION_DECL:
-                        if token.spelling == "copy_from_user" or token.spelling == "copy_to_user" or\
-                            token.spelling == "put_user" or token.spelling == "get_user":
-                            # we found it
-                            self.logger.info(
-                                "[*] Found IOCTL [" + IOCTL_CMD + "] case KERNEL COPY STMT: " + str(token.spelling))
-                            FunctionName = token.spelling
-                            if FunctionName == "copy_from_user" or FunctionName == "get_user":
-                                Direction = "in"
-                            elif FunctionName == "copy_to_user"or FunctionName == "put_user":
-                                Direction = "out"
-                            FoundCallExpression = True
-                        else:
-                            bfs.append(token.cursor)
-                elif FoundCallArgBracket == False:
-                    if Direction == "in":
-                        if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == "(":  # first argument is the destination
-                            FoundCallArgBracket = True
-                    elif Direction == "out":
-                        if token.kind == cindex.TokenKind.PUNCTUATION and token.spelling == ",":  # second argument is the destination
-                            FoundCallArgBracket = True
-
-                elif FoundCallArgBracket == True:
-                    if token.kind == cindex.TokenKind.IDENTIFIER \
-                            and token.cursor.kind == cindex.CursorKind.DECL_REF_EXPR:
-
-                        ioctlArg = str(token.cursor.type.spelling)
-                        ioctlArgList = ioctlArg.split(" ")
-                        if ioctlArgList[0] == "struct" or ioctlArgList[0] == "union":
-                            ioctlArg = ioctlArgList[1]
-                        elif ioctlArgList[0] == "unsigned":
-                            ioctlArg = ioctlArgList[1]
-                        else:
-                            ioctlArg = ioctlArgList[0].replace("*", "").replace("const", "").replace("volatile", "")
-
-                        ioctlArg = ioctlArg.strip()
-
-                        self.logger.info(
-                            "[*] IOCTL [" + IOCTL_CMD + "] MARSHALL KS_US OBJ: " + str(ioctlArg))
-                        return ioctlArg + " " + Direction
-
+    def findCursorToTargetFunction(self, IOCTL_CMD, tu, bfs=[]):
             # if bfs vector is not empty
             if len(bfs) > 0:
                 while len(bfs) > 0:
