@@ -761,10 +761,16 @@ class Descriptions(object):
 
         self.logger.debug("[*] Generating description file")
         includes = ""
-        include_path = "dev/" + os.path.basename(self.sysobj.target) + "/"
+        if self.sysobj.os_type == "linux":
+            include_path = "linux/" + os.path.basename(self.sysobj.target) + "/"
+        else:
+            include_path = "dev/" + os.path.basename(self.sysobj.target) + "/"
         flags_defn = ""
         for h_file in set(self.header_files):
             includes += "include <" + include_path + h_file + ">\n"
+
+        if self.sysobj.os_type == "linux": # extra includes for linux
+            includes += "include <uapi/" + include_path + h_file + ">\n"
         dev_name = self.target.split("/")[-1]
         fd_str = "fd_" + dev_name
         rsrc = "resource " + fd_str.replace("-", "_") + "[fd]\n"
