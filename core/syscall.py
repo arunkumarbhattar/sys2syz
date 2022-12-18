@@ -68,6 +68,7 @@ class Syscall(object):
                         return False
                 
                 self.linux_root = os.path.dirname(ctagfile)
+
                 self.fetch_defines(ctagfile)
                 return True
 
