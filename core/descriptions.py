@@ -825,8 +825,7 @@ class Descriptions(object):
         for root, dirs, files in os.walk(PreprocessedFileDir):
             # fetch all the files ending with .i
             for file in files:
-                if file.endswith(".i") and not file.startswith(".") \
-                        and self.isFileAGoodCandidate(file.replace(".i", ".c")):
+                if file.endswith(".i") and not file.startswith("."):
                     preprocessedFiles.append(file)
         IoctlDefinitions = None
         # iterate over all the files

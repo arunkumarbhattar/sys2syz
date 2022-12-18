@@ -27,6 +27,7 @@ class Sys2syz(object):
         self.os = os_name.lower()
         self.os_type = self.supported_os[self.os]
         self.log_level = log_level
+        self.defines_dict = {}
         if not exists(os.path.join(os.getcwd(), "out/", self.os, "preprocessed/")):
             os.makedirs(os.path.join(os.getcwd(), "out/", self.os, "preprocessed/"))
 
@@ -50,7 +51,6 @@ class Sys2syz(object):
             self.target = target
             self.out_dir = os.path.join(os.getcwd(), "out/", self.os, "preprocessed/", "syscalls", "out")
             self.syscalls = []
-            self.defines_dict = {}
             self.bear = Bear(self)
             self.c2xml = C2xml(self)
             self.syscall = Syscall(self)

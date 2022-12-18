@@ -23,7 +23,7 @@ class C2xml(object):
         :return:
         """
         cwd = os.getcwd()
-        if self.sysobj.os_type == 1:
+        if self.sysobj.input_type == "ioctl":
             preprocessed_path = join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", basename(self.target))
         else:
             preprocessed_path = join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", "syscalls")
