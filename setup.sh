@@ -76,7 +76,7 @@ do
 							echo "[+] Bear ran successfully"
 							echo "[+] Moving compile_commands.json to compile_commands folder"
 							mv compile_commands.json $COMPILE_COMMANDS_PATH/compile_commands_linux.json
-							ctags -R 
+							ctags --fields=eFkznNPSt -R
 							if [ $? -eq 0 ]
 							then
 								echo "[+] Ctags ran successfully"

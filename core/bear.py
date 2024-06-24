@@ -28,10 +28,10 @@ class Bear(object):
         Generates preprocessed files.
         :return: True
         """
-        
+
         for curr_command in compilation_commands:
             self.logger.debug("[*] Initialising the environment " + curr_command[1])
-            Utils(curr_command[1]).run_cmd(f"{' '.join(curr_command[0])} > {curr_command[3]}", doexit = True)
+            Utils(curr_command[1]).run_cmd(f"{' '.join(curr_command[0])} > {curr_command[3]}", doexit=True)
         return True
 
     def parse_compile_commands(self, target_path=None) -> bool:
@@ -39,10 +39,11 @@ class Bear(object):
         Parses commands recorded by bear
         :return:
         """
-        CompilationCommand = collections.namedtuple("CompilationCommand", ["curr_args", "work_dir", "src_file", "output_file"])
+        CompilationCommand = collections.namedtuple("CompilationCommand",
+                                                    ["curr_args", "work_dir", "src_file", "output_file"])
         commands = []
 
-        try: 
+        try:
             self.logger.debug("[*] Parsing compile_commands.json")
             fp = open(self.compile_commands, "r")
             all_cont = fp.read()
@@ -52,7 +53,7 @@ class Bear(object):
             return False
 
         json_obj = json.loads(all_cont)
-        if self.sysobj.input_type =="ioctl":
+        if self.sysobj.input_type == "ioctl":
             target_name = os.path.basename(self.target)
             if self.sysobj.os_type == 1:
                 target_path = "/dev/" + target_name
@@ -60,7 +61,7 @@ class Bear(object):
                 target_path = "drivers/" + target_name
         else:
             target_name = self.target
-        
+
         output_path = os.path.join(os.getcwd(), "out/", self.sysobj.os, "preprocessed/", target_name)
 
         if not Utils.dir_exists(output_path):
@@ -79,25 +80,26 @@ class Bear(object):
                     cura = curr_args[i]
                     if '="' in cura:
                         cn = cura.index('="')
-                        curr_args[i] = cura[0:cn+1] + "'" + cura[cn+1:]
+                        curr_args[i] = cura[0:cn + 1] + "'" + cura[cn + 1:]
                         curr_args[i] = curr_args[i] + "'"
                     if "-o" in curr_args[i]:
-                        del_arg = curr_args[i+1]
+                        del_arg = curr_args[i + 1]
                         curr_args.remove(curr_args[i])
                         curr_args.remove(del_arg)
                     i += 1
                 curr_args[0] += (" -fdirectives-only -E")
                 work_dir = curr_command["directory"]
-                output_file = output_path + "/"+ src_file.split("/")[-1].split(".")[0] + ".i" 
-                self.logger.debug("[*] Extracting commands for " + src_file.split("/")[-1] )
+                output_file = output_path + "/" + src_file.split("/")[-1].split(".")[0] + ".i"
+                self.logger.debug("[*] Extracting commands for " + src_file.split("/")[-1])
                 commands.append(CompilationCommand(curr_args, work_dir, src_file, output_file))
-        
+
         if flag == 0:
             self.logger.error("Unable to find the target in compile_commands.json")
             return False
         else:
             self.logger.debug("[*] Found the target in compile_commands.json")
             return self.compile_target(commands)
+
 
 def is_gcc_flag_allowed(curr_flag):
     """

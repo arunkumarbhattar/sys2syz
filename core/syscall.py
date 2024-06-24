@@ -29,7 +29,22 @@ class Syscall(object):
                         entryfile = entry['file'].decode("utf-8")
                         regmatch = regex_match.match(pattern)
                         if regmatch and (regmatch.group(2) in self.syscalls) and (entryfile.split('/')[-1] not in self.crashing_files):
-                                self.defines_dict[regmatch.group(2)] = entryfile
+                                line = entry['lineNumber']
+                                full_path = os.path.join(self.linux_root, entryfile)
+                                with open(full_path,'r') as fp:
+                                        all_cont = fp.readlines()
+                                        define = all_cont[line-1].strip(" \n\t")
+                                        while ')' not in define:
+                                                line += 1
+                                                define = define + all_cont[line-1].strip(" \n\t")
+                                        define = define[define.find('(')+1 : define.find(')')]
+                                        args = define.split(',')
+                                        final_types = []
+                                        if(len(args) > 1):
+                                                for i in range(1,len(args),2):
+                                                        final_types.append(args[i].strip(" \n\t"))
+                                        self.defines_dict[regmatch.group(2)] = (entryfile, final_types)
+                                fp.close()
 
         def fetch_defines(self, ctagfile) -> dict:
                 tags = ctags.CTags(ctagfile)
@@ -52,6 +67,8 @@ class Syscall(object):
                         self.logger.critical("[+] Tags file not found")
                         return False
                 
+                self.linux_root = os.path.dirname(ctagfile)
+
                 self.fetch_defines(ctagfile)
                 return True
 

@@ -31,9 +31,6 @@ class Ioctl(object):
         self.IOCTL_TRAP = IOCTL_TRAP
 
     def __repr__(self):
-        if self.os_name == 2 and self.description is None:  # 2 is linux
-            #self.description = self.get_linux_ioctl_structs(self.command)
-            print("The description is : " + str(self.description))
         return str(self.types[self.type]) + ", " + str(self.command) + ", " + str(self.filename) + ", " + str(
             self.description) + ", " + str(self.IOCTL_TRAP)
 
